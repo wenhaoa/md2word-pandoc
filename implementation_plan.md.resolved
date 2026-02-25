@@ -1,0 +1,163 @@
+# md2word 封面+目录自动合并功能
+
+## 目标
+
+在现有 md2word 转换流程中，增加**封面页+目录页**自动合并能力。每次转换自动在正文前插入固定的封面和目录，封面标题从 MD 的 YAML `title` 字段读取。
+
+## 现状分析
+
+### 当前文件结构
+
+```
+skills/md2word-pandoc/
+├── templates/
+│   └── md2word模板.docx        ← 样式模板（Pandoc 只用样式，不保留内容）
+├── scripts/
+│   ├── run_conversion.js       ← 主转换脚本（Node.js）
+│   └── style_filter.lua        ← Lua 标题过滤器
+```
+
+### 当前流程
+
+```
+MD → 预处理(JS) → Pandoc → 正文.docx（无封面无目录）
+```
+
+### 目标流程
+
+```
+MD → 预处理(JS) → Pandoc → 正文.docx → Python合并 → 最终.docx
+                                            ↑
+                                     前缀模板.docx（封面+目录）
+```
+
+---
+
+## 需要修改的文件
+
+### 影响范围评估
+
+| 文件 | 改动程度 | 说明 |
+|---|---|---|
+| [run_conversion.js](file:///C:/Users/18046/.gemini/antigravity/skills/md2word-pandoc/scripts/run_conversion.js) | **小改** | 在 Pandoc 完成后追加一步 Python 调用 |
+| [style_filter.lua](file:///C:/Users/18046/.gemini/antigravity/skills/md2word-pandoc/scripts/style_filter.lua) | **不改** | 无关 |
+| `md2word模板.docx` | **不改** | 继续作为 Pandoc 样式源 |
+
+### 新增文件
+
+| 文件 | 说明 |
+|---|---|
+| `templates/前缀模板.docx` | **[NEW]** 用户手动准备，包含封面页+目录域+分节符 |
+| `scripts/merge_cover.py` | **[NEW]** Python 脚本，负责合并前缀和正文 |
+
+---
+
+## 详细设计
+
+### 1. `前缀模板.docx`（用户手动准备）
+
+- 从现有已转换好的 Word 报告中，复制前两页（封面+目录）另存为 `前缀模板.docx`
+- 封面标题处改为占位符文本 `{{TITLE}}`（方便脚本查找替换）
+- 目录页保留 Word 自动目录域（TOC 字段），合并后用户手动 F9 刷新即可
+- 末尾必须以**分节符（下一页）**结尾
+
+### 2. `merge_cover.py`（新脚本，约 50 行）
+
+**依赖**：`docxcompose`（专业 docx 合并库，基于 python-docx）
+
+```
+pip install docxcompose
+```
+
+**核心逻辑**：
+
+```python
+import sys
+from docxcompose.composer import Composer
+from docx import Document
+
+def merge(prefix_path, body_path, output_path, title=None):
+    # 1. 打开前缀模板
+    prefix = Document(prefix_path)
+    
+    # 2. 如果有 title，替换 {{TITLE}} 占位符
+    if title:
+        for para in prefix.paragraphs:
+            if '{{TITLE}}' in para.text:
+                for run in para.runs:
+                    if '{{TITLE}}' in run.text:
+                        run.text = run.text.replace('{{TITLE}}', title)
+    
+    # 3. 合并正文
+    composer = Composer(prefix)
+    body = Document(body_path)
+    composer.append(body)
+    
+    # 4. 保存
+    composer.save(output_path)
+```
+
+命令行接口：
+```
+python merge_cover.py <前缀模板> <正文docx> <输出docx> [--title "标题"]
+```
+
+### 3. [run_conversion.js](file:///C:/Users/18046/.gemini/antigravity/skills/md2word-pandoc/scripts/run_conversion.js) 改动（约 10 行）
+
+在现有步骤 3（重命名）之前，插入步骤 2.5：
+
+```javascript
+// 2.5 合并封面（如果前缀模板存在）
+const prefixDoc = path.join(SKILL_DIR, 'templates', '前缀模板.docx');
+if (fs.existsSync(prefixDoc)) {
+    console.log("2.5️⃣ 合并封面与目录...");
+    const mergeScript = path.join(SKILL_DIR, 'scripts', 'merge_cover.py');
+    
+    // 从 MD frontmatter 提取 title（已在预处理阶段读取 content）
+    const titleMatch = content.match(/^---[\s\S]*?title:\s*(.+?)[\r\n]/m);
+    const titleArg = titleMatch ? `--title "${titleMatch[1].trim()}"` : '';
+    
+    const mergeCmd = `python "${mergeScript}" "${prefixDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg}`;
+    execSync(mergeCmd, { stdio: 'inherit' });
+}
+```
+
+> [!IMPORTANT]
+> **向后兼容**：通过 `fs.existsSync(prefixDoc)` 判断，如果用户没有准备 `前缀模板.docx`，则完全跳过合并步骤，行为与当前一致。
+
+---
+
+## 风险评估
+
+| 风险 | 等级 | 应对 |
+|---|---|---|
+| `docxcompose` 合并后编号列表断裂 | 中 | 测试验证，必要时用 python-docx 底层 XML 修复 |
+| 前缀模板的分节符丢失 | 低 | docxcompose 默认保留分节符 |
+| Python 环境依赖 | 低 | 首次运行时提示 `pip install docxcompose` |
+| 现有功能回归 | 极低 | 无前缀模板时完全不触发新代码 |
+
+---
+
+## 验证计划
+
+### 手动测试（用户执行）
+
+1. 准备 `前缀模板.docx`，放入 `templates/` 目录
+2. 用现有的报告 MD 文件执行 `md2word` 命令
+3. 打开生成的 Word 文件，检查：
+   - ✅ 第一页是否为封面，标题是否已替换
+   - ✅ 第二页是否为目录（按 Ctrl+A → F9 更新页码）
+   - ✅ 第三页起是否为正文，格式与之前一致
+   - ✅ 三级标题编号是否正常连续
+4. 删除 `前缀模板.docx`，再次执行 `md2word`，确认行为与之前完全一致（向后兼容）
+
+---
+
+## 用户操作变化
+
+| 步骤 | 变更前 | 变更后 |
+|---|---|---|
+| 一次性准备 | 无 | 新增：制作 `前缀模板.docx` 放入 templates 目录 |
+| 安装依赖 | 无 | 新增：`pip install docxcompose`（仅一次） |
+| 日常使用 | `md2word "报告.md"` | **不变** |
+| 后续操作 | 手动粘贴封面+目录 | **省略**，只需 F9 刷新目录页码 |
