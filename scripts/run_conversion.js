@@ -89,6 +89,19 @@ try {
     console.log(`   执行命令: pandoc [源文件] -o [输出] --reference-doc=[模板] --lua-filter=[过滤器]`);
     execSync(cmd, { stdio: 'inherit' });
 
+    // 2.5 合并封面+目录（模板同时作为样式源和封面内容源）
+    const mergeScript = path.join(SKILL_DIR, 'scripts', 'merge_cover.py');
+    if (fs.existsSync(mergeScript)) {
+        console.log("2.5️⃣  合并封面与目录...");
+
+        // 从 MD frontmatter 提取 title
+        const titleMatch = content.match(/^---[\s\S]*?title:\s*(.+?)[\r\n]/m);
+        const titleArg = titleMatch ? `--title "${titleMatch[1].trim()}"` : '';
+
+        const mergeCmd = `python "${mergeScript}" "${referenceDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg}`;
+        execSync(mergeCmd, { stdio: 'inherit' });
+    }
+
     console.log("3️⃣  重命名输出文件...");
     if (fs.existsSync(tmpOutput)) {
         fs.renameSync(tmpOutput, finalOutput);
