@@ -50,7 +50,7 @@ const timestamp = localDate.toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
 // 获取源文件basename（不含扩展名）
 const baseName = path.basename(mdFile, '.md');
-const finalName = `${baseName}_Final_${timestamp}.docx`;
+const finalName = `${baseName}_${timestamp}.docx`;
 
 // 输出到源文件所在目录
 const outputDir = path.dirname(mdFile);

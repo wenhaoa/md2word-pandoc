@@ -45,6 +45,39 @@ def replace_title_placeholder(doc, title):
                 run.text = ''
 
 
+def add_table_borders(doc):
+    """给文档中所有表格添加全框线（单实线）。
+    
+    WHY: Pandoc 生成的 docx 表格默认无边框，且不使用模板的 Table Normal 样式，
+    只能通过后处理在 OOXML 层面添加 tblBorders 元素。
+    """
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    # 6 条边框：上、下、左、右、内部横线、内部竖线
+    BORDER_NAMES = ['top', 'bottom', 'left', 'right', 'insideH', 'insideV']
+    # 边框属性：单实线，0.5pt（4 half-points），黑色
+    BORDER_ATTRS = {'val': 'single', 'sz': '4', 'space': '0', 'color': '000000'}
+
+    for table in doc.tables:
+        tbl = table._tbl
+        tbl_pr = tbl.tblPr
+        if tbl_pr is None:
+            tbl_pr = etree.SubElement(tbl, qn('w:tblPr'))
+
+        # 移除已有的 tblBorders（避免重复）
+        existing = tbl_pr.find(qn('w:tblBorders'))
+        if existing is not None:
+            tbl_pr.remove(existing)
+
+        # 创建新的 tblBorders
+        borders = etree.SubElement(tbl_pr, qn('w:tblBorders'))
+        for name in BORDER_NAMES:
+            border = etree.SubElement(borders, qn(f'w:{name}'))
+            for attr, value in BORDER_ATTRS.items():
+                border.set(qn(f'w:{attr}'), value)
+
+
 def merge(prefix_path, body_path, output_path, title=None):
     """合并前缀模板与正文文档。
     
@@ -61,12 +94,15 @@ def merge(prefix_path, body_path, output_path, title=None):
     if title:
         replace_title_placeholder(prefix, title)
     
-    # 3. 合并正文
-    composer = Composer(prefix)
+    # 3. 给正文表格添加框线（在合并前处理，封面表格不受影响）
     body = Document(body_path)
+    add_table_borders(body)
+    
+    # 4. 合并正文
+    composer = Composer(prefix)
     composer.append(body)
     
-    # 4. 保存
+    # 5. 保存
     composer.save(output_path)
     print(f"   合并完成: {output_path}")
 

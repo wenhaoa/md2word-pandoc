@@ -68,6 +68,14 @@ local function strip_manual_numbering(el)
            text = text:gsub("^%d+%s+", "")
            processed = true
        end
+
+    -- Case 6: Pure numeric "1" or "12" (Pandoc splits "## 1 xxx" into Str("1") + Space + Str("xxx"))
+    -- WHY: Pandoc 会将 "1 软件概述" 拆分为独立的 Str("1"), Space, Str("软件概述") 三个元素
+    -- 此时第一个 Str 只包含纯数字，没有空格，需要删除该 Str + 后续 Space
+    elseif text:match("^%d+$") and not text:match("^%d%d%d%d$") then
+       -- WHY: 修改 text 而非 str_item.text，因为后面 processed 块会用 text 赋值
+       text = ""
+       processed = true
     end
     
     if processed then
