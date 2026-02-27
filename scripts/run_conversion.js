@@ -60,6 +60,103 @@ const tmpInput = path.join(outputDir, 'temp_input.md');
 const tmpOutput = path.join(outputDir, 'temp_output.docx');
 const finalOutput = path.join(outputDir, finalName);
 
+// ============ 空格清理：对一行正文执行多条规则 ============
+function cleanLineBody(body) {
+    // 规则1: [CJK字符/标点] + 正好 1 个空格 + [任意非空白] → 删除空格
+    body = body.replace(/([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])[ \t](\S)/g, '$1$2');
+
+    // 规则2: [任意非空白] + 正好 1 个空格 + [CJK字符/标点] → 删除空格
+    body = body.replace(/(\S)[ \t]([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g, '$1$2');
+
+    // 规则3: [数字] + 正好 1 个空格 + [单位字母/符号] → 删除空格 (1rad, 5mm)
+    body = body.replace(/(\d)[ \t]([a-zA-Z\u00b0\u00b5\u03bc%\u2030])/g, '$1$2');
+
+    // 规则4: [比较符] + 正好 1 个空格 + [数字] → 删除空格 (<1, >5)
+    body = body.replace(/([\u003c\u003e\u2264\u2265\u2248])[ \t](\d)/g, '$1$2');
+
+    // 规则5: 逗号 + 正好 1 个空格 + [数字/正负号] → 删除空格 (坐标紧凑化)
+    //   覆盖：(0.00, 1346.222) → (0.00,1346.222)
+    body = body.replace(/,[ \t]([+\-\u2212]?\d)/g, ',$1');
+
+    return body;
+}
+
+function cleanSpaces(content) {
+    // Step 1: 保护代码围栏和显示公式
+    const protectedBlocks = [];
+    content = content.replace(/(```[\s\S]*?```)/g, (match) => {
+        protectedBlocks.push(match);
+        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
+    });
+    content = content.replace(/(\$\$[\s\S]*?\$\$)/g, (match) => {
+        protectedBlocks.push(match);
+        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
+    });
+
+    // Step 1.5: 连接 CJK 跨行软换行
+    // WHY: 当一行以 CJK 字符/标点结尾，下一行以 CJK 字符/标点开头时，
+    // 删除中间的换行符，防止 Pandoc 在此处插入空格
+    content = content.replace(
+        /([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\r?\n([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g,
+        '$1$2'
+    );
+
+    // Step 2: 逐行处理
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
+        // 跳过含占位符的行
+        if (line.includes('\x00PROT_')) continue;
+
+        // 跳过表格分隔行 |---|---|
+        if (/^\|[\s\-:|]+\|/.test(line)) continue;
+
+        // --- 提取行首 Markdown 语法前缀 (不参与清理) ---
+        let prefix = '';
+        let body = line;
+
+        // 标题行：保护整个 "# " / "## " / "### 1.2.3 " / "## 第X章 " 前缀
+        const headerMatch = line.match(/^(#{1,6}\s+(?:(?:\d+\.)+\d*\s+)?(?:\u7b2c[\S]*\u7ae0\s+)?)/);
+        if (headerMatch) {
+            prefix = headerMatch[1];
+            body = line.slice(prefix.length);
+        } else {
+            // 引用块 > 
+            const quoteMatch = line.match(/^(>\s*)/);
+            if (quoteMatch) {
+                prefix = quoteMatch[1];
+                body = line.slice(prefix.length);
+            } else {
+                // 列表项前缀 (如 "- ", "* ", "1. ")
+                const listMatch = line.match(/^([ \t]*[\*\-\+][ \t]+|[ \t]*\d+\.[ \t]+)/);
+                if (listMatch) {
+                    prefix = listMatch[1];
+                    body = line.slice(prefix.length);
+                }
+            }
+        }
+
+        // --- 防御性判定：如果 body 中存在 `\S` 之间至少 2 个空格的对齐块 ---
+        // WHY: 极大概率是 Pandoc Simple/Multiline/Grid Table 的列分隔符，
+        // 跳过整行避免破坏对齐
+        if (/\S[ \t]{2,}\S/.test(body)) {
+            continue;
+        }
+
+        // 对 body 执行清理
+        body = cleanLineBody(body);
+
+        lines[i] = prefix + body;
+    }
+    content = lines.join('\n');
+
+    // Step 3: 恢复受保护的块
+    content = content.replace(/\x00PROT_(\d+)\x00/g, (_, idx) => protectedBlocks[parseInt(idx)]);
+
+    return content;
+}
+
 try {
     console.log("📄 源文件:", mdFile);
     console.log("📝 模板文件:", referenceDoc);
@@ -70,16 +167,7 @@ try {
 
     // 读取源文件内容
     let content = fs.readFileSync(mdFile, 'utf8');
-
-    // 1. 清理 [汉字] [空格] [英文/数字]（仅同行内空白，不匹配换行符）
-    // WHY: \s+ 会匹配 \n，导致标题末尾汉字与下一段首英文跨行合并
-    content = content.replace(/([\u4e00-\u9fa5])[^\S\n\r]+([a-zA-Z0-9])/g, '$1$2');
-
-    // 2. 清理 [英文/数字] [空格] [汉字]（仅同行内空白）
-    content = content.replace(/([a-zA-Z0-9])[^\S\n\r]+([\u4e00-\u9fa5])/g, '$1$2');
-
-    // 3. 尝试清理表格中的多余空行 (将连续两个换行符替换为一个，但在表格块内)
-    // 注意：全篇替换可能会破坏段落结构，暂不激进处理，仅处理上述空格
+    content = cleanSpaces(content);
 
     fs.writeFileSync(tmpInput, content, 'utf8');
 

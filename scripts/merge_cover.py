@@ -46,10 +46,10 @@ def replace_title_placeholder(doc, title):
 
 
 def add_table_borders(doc):
-    """给文档中所有表格添加全框线（单实线）。
+    """给文档中所有表格添加全框线（单实线）并居中对齐。
     
-    WHY: Pandoc 生成的 docx 表格默认无边框，且不使用模板的 Table Normal 样式，
-    只能通过后处理在 OOXML 层面添加 tblBorders 元素。
+    WHY: Pandoc 生成的 docx 表格默认无边框且左对齐，不使用模板的 Table Normal 样式，
+    只能通过后处理在 OOXML 层面添加 tblBorders 和 jc 元素。
     """
     from docx.oxml.ns import qn
     from lxml import etree
@@ -76,6 +76,13 @@ def add_table_borders(doc):
             border = etree.SubElement(borders, qn(f'w:{name}'))
             for attr, value in BORDER_ATTRS.items():
                 border.set(qn(f'w:{attr}'), value)
+
+        # WHY: Pandoc 默认生成左对齐表格，通过 jc 元素设置居中
+        existing_jc = tbl_pr.find(qn('w:jc'))
+        if existing_jc is not None:
+            tbl_pr.remove(existing_jc)
+        jc = etree.SubElement(tbl_pr, qn('w:jc'))
+        jc.set(qn('w:val'), 'center')
 
 
 def merge(prefix_path, body_path, output_path, title=None):
