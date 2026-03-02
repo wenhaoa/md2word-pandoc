@@ -110,20 +110,21 @@ function Pandoc(doc)
     shift_mode = "no_shift"
     print("[style_filter] H1 count = " .. h1_count .. " -> No shift mode (H1->Heading1)")
   end
+
+  -- Step 2.5: 清除 metadata title，防止 Pandoc 自动渲染到正文
+  -- WHY: 标题由 merge_cover.py 的 {{TITLE}} 占位符负责展示在封面，
+  -- 若不清除，Pandoc --standalone 会在正文开头额外插入一个 title 段落
+  doc.meta.title = nil
   
   -- Step 3: 处理所有标题
   local new_blocks = {}
   for _, block in ipairs(doc.blocks) do
     if block.t == 'Header' then
       if shift_mode == "shift" then
-        -- H1 = 1 的情况：H1 转为 Title 样式，其他降级
         if block.level == 1 then
-          -- 将 H1 转为带 Title 样式的 Div
-          local title_div = pandoc.Div(
-            {pandoc.Para(block.content)},
-            {['custom-style'] = 'Title'}
-          )
-          table.insert(new_blocks, title_div)
+          -- WHY: 直接丢弃 H1，不再转为 Title Div。
+          -- 标题已由 merge_cover.py 的封面 {{TITLE}} 展示，正文中不需要重复。
+          print("[style_filter] Skipping H1 (title handled by cover page)")
         else
           -- H2->H1, H3->H2, etc.
           block.level = block.level - 1

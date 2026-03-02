@@ -82,8 +82,13 @@ function cleanLineBody(body) {
 }
 
 function cleanSpaces(content) {
-    // Step 1: 保护代码围栏和显示公式
+    // Step 1: 保护代码围栏、显示公式和 YAML frontmatter
     const protectedBlocks = [];
+    // 保护 YAML frontmatter（文件开头的 ---...--- 块）
+    content = content.replace(/^---[\s\S]*?\n---/m, (match) => {
+        protectedBlocks.push(match);
+        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
+    });
     content = content.replace(/(```[\s\S]*?```)/g, (match) => {
         protectedBlocks.push(match);
         return `\x00PROT_${protectedBlocks.length - 1}\x00`;
@@ -92,6 +97,12 @@ function cleanSpaces(content) {
         protectedBlocks.push(match);
         return `\x00PROT_${protectedBlocks.length - 1}\x00`;
     });
+
+    // Step 1.3: 中文双引号转换（在保护区生效后、空格清理前执行）
+    // WHY: 成对匹配 "..." 并要求内容包含至少一个 CJK 字符，
+    // 这样 YAML 中的 "value"、英文引号都不受影响。
+    // 在空格清理前执行，避免空格删除后丢失引号方向信息。
+    content = content.replace(/"([^"\n]*?[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef][^"\n]*?)"/g, '\u201C$1\u201D');
 
     // Step 1.5: 连接 CJK 跨行软换行
     // WHY: 当一行以 CJK 字符/标点结尾，下一行以 CJK 字符/标点开头时，
@@ -169,11 +180,13 @@ try {
     let content = fs.readFileSync(mdFile, 'utf8');
     content = cleanSpaces(content);
 
+
     fs.writeFileSync(tmpInput, content, 'utf8');
 
     console.log("2️⃣  执行 Pandoc 转换...");
     // 使用引号包裹路径，防止空格导致的问题
-    const cmd = `pandoc "${tmpInput}" -o "${tmpOutput}" --reference-doc="${referenceDoc}" --lua-filter="${filterScript}" --standalone`;
+    // WHY: --from markdown-smart 禁用 smart 扩展，防止 Pandoc 在预转换后二次处理引号
+    const cmd = `pandoc "${tmpInput}" -o "${tmpOutput}" --from markdown-smart --reference-doc="${referenceDoc}" --lua-filter="${filterScript}" --standalone`;
     console.log(`   执行命令: pandoc [源文件] -o [输出] --reference-doc=[模板] --lua-filter=[过滤器]`);
     execSync(cmd, { stdio: 'inherit' });
 
