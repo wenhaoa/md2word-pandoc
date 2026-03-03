@@ -28,18 +28,15 @@
 
 ### 给 AI 发送安装指令
 
-在 Antigravity  对话中告诉 AI：
+在 Antigravity / Jules 对话中发送以下消息即可一键完成安装和配置：
 
 ```
 帮我安装这个 skill：https://github.com/wenhaoa/md2word-pandoc
+并进行首次使用配置检查（安装配套的环境 Pandoc、Node.js、Rules 和 Workflow）。
+然后用里面的 examples/示例技术报告.md 转一个 Word 看看效果。
 ```
 
-AI 会自动执行：
-```powershell
-npx @anthropic/skills-cli add https://github.com/wenhaoa/md2word-pandoc
-```
-
-安装目标路径：`~/.gemini/antigravity/skills/md2word-pandoc/`
+AI 会自动完成：安装 Skill → 配置写作规则和预检工作流 → 检查环境依赖 → 用示例文档转换一份 Word 验证效果。
 
 ### 环境依赖
 
@@ -71,7 +68,19 @@ pip install python-docx
 1. 执行格式预检（`/report-check`）
 2. 调用转换脚本生成 Word 文件
 
-### 方式 2：命令行
+### 方式 2：双击 / 拖拽 / 右键发送到（无需命令行）
+
+首次双击运行 `scripts\install_shortcuts.bat`，自动在桌面和右键「发送到」菜单创建快捷方式。
+
+| 操作                        | 说明                     |
+| --------------------------- | ------------------------ |
+| 双击桌面「md2word」图标     | 弹出文件选择对话框       |
+| 拖拽 .md 文件到桌面图标上   | 直接转换                 |
+| 右键 .md → 发送到 → md2word | 文件资源管理器中直接转换 |
+
+转换完成后自动打开 Word 查看效果。
+
+### 方式 3：命令行
 
 ```powershell
 # 直接调用
@@ -96,6 +105,8 @@ md2word-pandoc/
 ├── SETUP_GUIDE.md                    # PowerShell 快捷命令配置
 ├── scripts/
 │   ├── run_conversion.js             # 主转换脚本（预处理+调用 Pandoc）
+│   ├── md2word_gui.bat               # GUI 入口（双击/拖拽/SendTo）
+│   ├── install_shortcuts.bat         # 快捷方式安装（桌面+SendTo）
 │   ├── style_filter.lua              # 智能标题过滤器
 │   ├── merge_cover.py                # 封面合并脚本
 │   └── md2word-function.ps1          # PowerShell 快捷函数
@@ -164,6 +175,7 @@ title: 你的文档标题
 
 | 版本 | 日期       | 更新内容                                                          |
 | ---- | ---------- | ----------------------------------------------------------------- |
+| V1.3 | 2026-03-03 | 新增 GUI 入口（双击/拖拽/SendTo），支持转换后自动打开 Word        |
 | V1.2 | 2026-03-03 | 新增首次安装引导、配套 Rules/Workflow 打包、report-check 预检串联 |
 | V1.1 | 2026-03-02 | 修复封面标题重复、中文双引号方向、新增表格后处理                  |
 | V1.0 | 2026-02-05 | 初始版本                                                          |

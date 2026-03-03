@@ -4,13 +4,15 @@ const { execSync } = require('child_process');
 const path = require('path');
 
 // ============ 配置：支持命令行参数 ============
-// 从命令行获取源文件名，支持相对路径和绝对路径
-const mdFileInput = process.argv[2];
+// 解析命令行参数：支持 --open 标志（转换完成后自动打开 Word）
+const args = process.argv.slice(2);
+const openAfterConvert = args.includes('--open');
+const mdFileInput = args.find(a => !a.startsWith('--'));
 
 if (!mdFileInput) {
     console.error('❌ 错误：请提供源 Markdown 文件名');
-    console.error('用法: node run_conversion.js <源文件.md>');
-    console.error('示例: node run_conversion.js 报告.md');
+    console.error('用法: node run_conversion.js <源文件.md> [--open]');
+    console.error('示例: node run_conversion.js 报告.md --open');
     process.exit(1);
 }
 
@@ -214,6 +216,13 @@ try {
 
     // 清理临时文件
     fs.unlinkSync(tmpInput);
+
+    // WHY: --open 标志用于 GUI 入口（BAT 双击/拖拽），命令行模式默认不打开
+    if (openAfterConvert) {
+        console.log('📖 正在打开 Word 文件...');
+        const { exec } = require('child_process');
+        exec(`start "" "${finalOutput}"`);
+    }
 
 } catch (error) {
     console.error("\n❌ 转换失败:");
