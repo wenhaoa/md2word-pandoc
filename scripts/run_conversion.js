@@ -4,15 +4,19 @@ const { execSync } = require('child_process');
 const path = require('path');
 
 // ============ 配置：支持命令行参数 ============
-// 解析命令行参数：支持 --open 标志（转换完成后自动打开 Word）
+// 解析命令行参数
 const args = process.argv.slice(2);
 const openAfterConvert = args.includes('--open');
+const skipCaption = args.includes('--no-caption');
+const skipMathType = args.includes('--no-mathtype');
 const mdFileInput = args.find(a => !a.startsWith('--'));
 
 if (!mdFileInput) {
     console.error('❌ 错误：请提供源 Markdown 文件名');
-    console.error('用法: node run_conversion.js <源文件.md> [--open]');
+    console.error('用法: node run_conversion.js <源文件.md> [--open] [--no-caption] [--no-mathtype]');
     console.error('示例: node run_conversion.js 报告.md --open');
+    console.error('  --no-caption    跳过图表题注 SEQ 域处理');
+    console.error('  --no-mathtype   跳过 MathType 公式转换');
     process.exit(1);
 }
 
@@ -187,8 +191,8 @@ try {
 
     console.log("2️⃣  执行 Pandoc 转换...");
     // 使用引号包裹路径，防止空格导致的问题
-    // WHY: --from markdown-smart 禁用 smart 扩展，防止 Pandoc 在预转换后二次处理引号
-    const cmd = `pandoc "${tmpInput}" -o "${tmpOutput}" --from markdown-smart --reference-doc="${referenceDoc}" --lua-filter="${filterScript}" --standalone`;
+    // WHY: --resource-path 确保从任意工作目录调用时（如右键发送到），Pandoc 也能找到相对路径的图片
+    const cmd = `pandoc "${tmpInput}" -o "${tmpOutput}" --from markdown-smart --reference-doc="${referenceDoc}" --lua-filter="${filterScript}" --resource-path="${outputDir}" --standalone`;
     console.log(`   执行命令: pandoc [源文件] -o [输出] --reference-doc=[模板] --lua-filter=[过滤器]`);
     execSync(cmd, { stdio: 'inherit' });
 
@@ -203,6 +207,28 @@ try {
 
         const mergeCmd = `python "${mergeScript}" "${referenceDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg}`;
         execSync(mergeCmd, { stdio: 'inherit' });
+    }
+
+    // 2.6 添加图表题注 SEQ 域
+    const captionScript = path.join(SKILL_DIR, 'scripts', 'add_captions.py');
+    if (!skipCaption && fs.existsSync(captionScript)) {
+        console.log("2.6️⃣  添加图表题注 SEQ 域...");
+        try {
+            execSync(`python "${captionScript}" "${tmpOutput}"`, { stdio: 'inherit' });
+        } catch (e) {
+            console.warn('  ⚠ 题注处理失败（非致命）:', e.message);
+        }
+    }
+
+    // 2.7 转换 OMML 公式为 MathType 对象
+    const mathtypeScript = path.join(SKILL_DIR, 'scripts', 'convert_mathtype.vbs');
+    if (!skipMathType && fs.existsSync(mathtypeScript)) {
+        console.log("2.7️⃣  转换公式为 MathType...");
+        try {
+            execSync(`cscript //nologo "${mathtypeScript}" "${tmpOutput}"`, { stdio: 'inherit' });
+        } catch (e) {
+            console.warn('  ⚠ MathType 转换失败（非致命）:', e.message);
+        }
     }
 
     console.log("3️⃣  重命名输出文件...");

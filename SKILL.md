@@ -18,7 +18,8 @@ description: |
 3. **智能标题映射**：自动检测 Markdown 标题结构，适配不同写作习惯
 4. **中文排版优化**：自动转换中文双引号、清理 CJK/Latin 间距
 5. **封面与目录合并**：支持从模板自动合并封面页，标题通过 `{{TITLE}}` 占位符注入
-6. **自动化流程**：处理中文文件名、时间戳、备份等繁琐操作
+6. **图表题注自动编号**：`图N-M` / `表N-M` 自动转换为 Word SEQ 域，支持自动更新
+7. **自动化流程**：处理中文文件名、时间戳、备份等繁琐操作
 
 ## 使用场景
 
@@ -116,7 +117,24 @@ const localDate = new Date(now.getTime() - offset);
 
 ---
 
-### 3. 样式模板 (`md2word模板.docx`)
+### 3. 图表题注处理 (`add_captions.py`)
+
+**功能**：Pandoc 转换后自动扫描 `图N-M` / `表N-M` 题注，替换为 Word SEQ 域。
+
+**域代码结构**：
+```
+图{STYLEREF 1 \s}-{SEQ 图 \* ARABIC \s 1} 标题文本
+```
+- `STYLEREF 1 \s`：从最近的 Heading 1 获取章节编号（域，自动更新）
+- `SEQ 图 \* ARABIC \s 1`：章内自动递增编号，每个 Heading 1 处重置（域，自动更新）
+
+**段落格式**：题注自动设为居中对齐、无首行缩进、段前段后 6pt。
+
+**使用提示**：生成的 docx 打开后按 **Ctrl+A → F9** 更新所有域即可显示正确编号。
+
+---
+
+### 4. 样式模板 (`md2word模板.docx`)
 
 **核心样式定义**：
 
@@ -161,6 +179,28 @@ title: 低轨卫星离轨技术研究方案报告
 - 编号带点号：`## 1. 概述`（不是 `## 1 概述`）
 - 附录：`## 附录 A 标题`
 
+### 图表题注写法
+
+**图片题注**（紧跟图片下方）：
+```markdown
+![图2-1 智能温室控制系统架构示意图](images/system_architecture.png)
+```
+
+**表格题注**（独立一行，位于表格上方）：
+```markdown
+表2-1 各层核心组件及功能描述
+
+| 层级 | 核心组件 | 功能描述 |
+| ---- | -------- | -------- |
+| ...  | ...      | ...      |
+```
+
+**注意事项**：
+- 编号格式：`图N-M` 或 `表N-M`（N=章节号，M=章内序号），减号分隔
+- Markdown 中写的编号仅用于可读性和排序，转 Word 后由 SEQ 域自动更新
+- 题注行总长度不超过 60 字符（超长会被识别为正文而非独立题注）
+- 正文引用写法不受影响（如「如图2-1所示」不会被转换）
+
 ### 正文格式
 
 - 避免不必要的加粗
@@ -183,7 +223,9 @@ title: 低轨卫星离轨技术研究方案报告
    ```powershell
    node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
    ```
+   可选参数：`--no-caption`（跳过题注处理）、`--no-mathtype`（跳过 MathType 转换）
 4. **报告结果**：告知用户输出文件路径（生成在源文件同目录，格式为 `<源文件名>_时间戳.docx`）
+5. **提示更新域**：告知用户打开 Word 后按 Ctrl+A → F9 更新所有域（题注编号等）
 
 > 如果用户已配置 PowerShell Profile，也可以直接使用 `md2word "文件.md"`。
 
@@ -334,6 +376,11 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 
 ## 版本历史
 
+- **V1.3** (2026-03-04)：
+  - 新增图表题注自动编号（`add_captions.py`），生成 Word SEQ 域
+  - 新增 `--no-caption` / `--no-mathtype` 命令行参数
+  - 新增 MathType 转换脚本框架（`convert_mathtype.vbs`，实验性）
+  - 示例文档增加图片和表格题注演示
 - **V1.2** (2026-03-03)：
   - 新增首次安装引导与配套检查（Rules Part D + report-check workflow）
   - 新增 Markdown 文档要求章节（明确 title frontmatter 规范）
