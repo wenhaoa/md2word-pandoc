@@ -223,7 +223,7 @@ title: 低轨卫星离轨技术研究方案报告
    ```powershell
    node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
    ```
-   可选参数：`--no-caption`（跳过题注处理）、`--no-mathtype`（跳过 MathType 转换）
+   可选参数：`--no-caption`（跳过题注处理）
 4. **报告结果**：告知用户输出文件路径（生成在源文件同目录，格式为 `<源文件名>_时间戳.docx`）
 5. **提示更新域**：告知用户打开 Word 后按 Ctrl+A → F9 更新所有域（题注编号等）
 
@@ -378,8 +378,9 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 
 - **V1.3** (2026-03-04)：
   - 新增图表题注自动编号（`add_captions.py`），生成 Word SEQ 域
-  - 新增 `--no-caption` / `--no-mathtype` 命令行参数
-  - 新增 MathType 转换脚本框架（`convert_mathtype.vbs`，实验性）
+  - 新增 `--no-caption` 命令行参数
+  - 禁用 Pandoc subscript/superscript 扩展（防止 `~` 被解析为下标）
+  - 新增 `--resource-path` 修复右键发送图片丢失问题
   - 示例文档增加图片和表格题注演示
 - **V1.2** (2026-03-03)：
   - 新增首次安装引导与配套检查（Rules Part D + report-check workflow）

@@ -140,8 +140,8 @@ def set_caption_format(para):
     pf = para.paragraph_format
     pf.alignment = WD_ALIGN_PARAGRAPH.CENTER
     pf.first_line_indent = Pt(0)
-    pf.space_before = Pt(6)
-    pf.space_after = Pt(6)
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
 
 
 def has_drawing(para_elem):
