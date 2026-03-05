@@ -19,7 +19,7 @@ description: |
 4. **中文排版优化**：自动转换中文双引号、清理 CJK/Latin 间距
 5. **封面与目录合并**：支持从模板自动合并封面页，标题通过 `{{TITLE}}` 占位符注入
 6. **图表题注自动编号**：`图N-M` / `表N-M` 自动转换为 Word SEQ 域，支持自动更新
-7. **自动化流程**：处理中文文件名、时间戳、备份等繁琐操作
+
 
 ## 使用场景
 
@@ -274,7 +274,7 @@ title: 低轨卫星离轨技术研究方案报告
    md2word "你的文件.md"
    ```
 
-> 详细配置说明见：[SETUP_GUIDE.md](./SETUP_GUIDE.md)
+
 
 ---
 
@@ -393,3 +393,27 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
   - 新增 YAML frontmatter 保护（防止引号转换破坏 YAML 语法）
   - 新增表格框线与居中自动后处理
 - **V1.0** (2026-02-05)：初始版本，包含核心转换流程和智能标题映射
+
+## 维护指南
+
+### 单一真相源
+
+| 信息             | 权威源                                | 同步到                              |
+| ---------------- | ------------------------------------- | ----------------------------------- |
+| 写作规则 D.1~D.5 | `references/first_time_setup.md`      | → `GEMINI.md` Part D                |
+| 预检规则 D.4     | `references/first_time_setup.md` §D.4 | → 全局 `report-check.md` 工作流     |
+| 版本历史         | 本文件（SKILL.md）                    | → `README.md`（仅版本号）           |
+| 转换流程技术细节 | `run_conversion.js` 源码              | → `references/technical_details.md` |
+| 使用方式         | 本文件（SKILL.md）                    | `README.md` 仅简要引用              |
+
+### 新增功能时的更新检查清单
+
+修改转换流程后，按以下清单逐项确认：
+
+1. `scripts/run_conversion.js` — 主流程代码
+2. `SKILL.md` — AI 指令（参数说明、操作步骤、版本历史）
+3. `references/technical_details.md` — 技术备忘（流程图、命令参数）
+4. `references/first_time_setup.md` — 若涉及新的写作规则
+5. `GEMINI.md` Part D — 若 first_time_setup 有变更则同步
+6. `examples/示例技术报告.md` — 新增功能的演示
+7. `README.md` — 仅更新版本号
