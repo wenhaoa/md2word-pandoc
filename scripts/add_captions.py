@@ -103,6 +103,22 @@ def make_text_run(text):
     return r
 
 
+def _ensure_bold(run_elems):
+    """给 run 元素列表强制添加加粗格式。
+    
+    WHY: 题注（图N-M / 表N-M）需要加粗以区别于正文。
+    """
+    for r in run_elems:
+        if r.tag != qn('w:r'):
+            continue
+        rpr = r.find(qn('w:rPr'))
+        if rpr is None:
+            rpr = OxmlElement('w:rPr')
+            r.insert(0, rpr)
+        if rpr.find(qn('w:b')) is None:
+            rpr.append(OxmlElement('w:b'))
+
+
 def build_caption_runs(caption_type, rpr_source=None):
     """构建全域化题注 run 序列。
 
@@ -233,11 +249,15 @@ def process_captions(doc):
             if source_rpr is not None:
                 r_title.insert(0, copy.deepcopy(source_rpr))
 
+        # 加粗全部题注 run（域编号 + 标题文本）
+        all_runs = caption_runs + [r_title]
+        _ensure_bold(all_runs)
+
         # 插入 runs
         ppr = p._element.find(qn('w:pPr'))
         insert_after = ppr if ppr is not None else None
 
-        for run_elem in caption_runs + [r_title]:
+        for run_elem in all_runs:
             if insert_after is not None:
                 insert_after.addnext(run_elem)
                 insert_after = run_elem

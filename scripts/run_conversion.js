@@ -226,6 +226,11 @@ try {
         fs.renameSync(tmpOutput, finalOutput);
         console.log(`\n✅ 转换成功！\n`);
         console.log(`📦 输出文件: ${finalOutput}\n`);
+        console.log(`📋 打开 Word 后请检查：`);
+        console.log(`   1. Ctrl+A → F9 更新全部域（图表编号）`);
+        console.log(`   2. 全选 → MathType → 转换公式`);
+        console.log(`   3. 检查残留空格（中英文间、数字与单位间）`);
+        console.log(`   4. 检查表格宽度和图片尺寸\n`);
     } else {
         throw new Error("Pandoc 未能生成输出文件");
     }

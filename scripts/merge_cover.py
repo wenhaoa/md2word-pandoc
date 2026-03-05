@@ -84,6 +84,41 @@ def add_table_borders(doc):
         jc = etree.SubElement(tbl_pr, qn('w:jc'))
         jc.set(qn('w:val'), 'center')
 
+def _remove_first_empty_paragraph(doc):
+    """删除正文（第一个段落级分节符之后）的第一个空段落。
+    
+    WHY: docxcompose.append() 合并封面和正文时，会在分节符后
+    残留一个空的 Normal 段落，导致正文第一行总是空行。
+    """
+    from docx.oxml.ns import qn
+    
+    body = doc.element.body
+    children = list(body)
+    
+    # WHY: 找第一个段落级 sectPr（封面/正文分界符），
+    #       不能用最后一个（body-level sectPr 是文档末尾属性，不是分节符）
+    first_sect_idx = -1
+    for i, c in enumerate(children):
+        if c.tag == qn('w:p'):
+            ppr = c.find(qn('w:pPr'))
+            if ppr is not None and ppr.find(qn('w:sectPr')) is not None:
+                first_sect_idx = i
+                break
+    
+    if first_sect_idx < 0:
+        return
+    
+    # 从分节符之后扫描，删除第一个空段落
+    for i in range(first_sect_idx + 1, min(first_sect_idx + 10, len(children))):
+        c = children[i]
+        if c.tag != qn('w:p'):
+            continue
+        text = ''.join(n.text or '' for n in c.iter(qn('w:t')))
+        if text.strip() == '':
+            body.remove(c)
+            print("   已删除正文开头空段落")
+            return
+
 
 def merge(prefix_path, body_path, output_path, title=None):
     """合并前缀模板与正文文档。
@@ -108,6 +143,11 @@ def merge(prefix_path, body_path, output_path, title=None):
     # 4. 合并正文
     composer = Composer(prefix)
     composer.append(body)
+    
+    # 4.5 删除正文开头的空段落
+    # WHY: docxcompose 合并时在分节符后会残留一个空 Normal 段落，
+    #       导致正文第一行总是空行，需自动清除
+    _remove_first_empty_paragraph(composer.doc)
     
     # 5. 保存
     composer.save(output_path)
