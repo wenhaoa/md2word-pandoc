@@ -1,12 +1,13 @@
 """
-add_captions.py - 将图表题注替换为 Word SEQ 域自动编号 + 调整图片尺寸
+add_captions.py - Pandoc docx 后处理：题注域编号 + 表格/图片格式
 
 用法:
     python add_captions.py <docx文件>
 
 功能:
     1. 扫描 Pandoc 生成的 docx，识别 "图N-M" / "表N-M" 题注并替换为域
-    2. 将嵌入图片宽度调整为页面宽度
+    2. 表格单元格垂直居中
+    3. 图片段落居中
 
 域代码结构:
     图{STYLEREF "Heading 1" \\s}-{SEQ 图 \\* ARABIC \\s 1} 标题
@@ -22,15 +23,12 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt, Cm, Emu
+from docx.shared import Pt
 
 
 # 匹配独立题注行
 CAPTION_PATTERN = re.compile(r'^(图|表)\s*\d+[-\.]\d+\s*')
 MAX_CAPTION_LENGTH = 60
-
-# 图片目标宽度（A4 页面可用宽度约 15.9cm，取 14.5cm 留边距）
-IMAGE_TARGET_WIDTH_CM = 14.5
 
 
 def make_field_runs(instr_text):
@@ -165,44 +163,42 @@ def has_drawing(para_elem):
     return bool(para_elem.findall('.//' + qn('w:drawing')))
 
 
-def resize_images(doc, target_width_cm=IMAGE_TARGET_WIDTH_CM):
-    """将文档中所有嵌入图片宽度调整为目标宽度，保持纵横比。
+def center_table_cells(doc):
+    """设置所有表格单元格垂直居中。
 
-    WHY: Pandoc 按原始像素/DPI 嵌入图片，常导致图片过小。
-    统一调整为接近页面宽度以确保可读性。
+    WHY: Pandoc 生成的表格默认靠上对齐，多行文字时视觉效果差。
     """
-    target_width_emu = Cm(target_width_cm)
     count = 0
-
-    for p in doc.paragraphs:
-        inlines = p._element.findall('.//' + qn('wp:inline'))
-        for inline in inlines:
-            extent = inline.find(qn('wp:extent'))
-            if extent is None:
-                continue
-
-            cx = int(extent.get('cx', 0))
-            cy = int(extent.get('cy', 0))
-            if cx == 0 or cy == 0:
-                continue
-
-            # 计算缩放比例保持纵横比
-            ratio = target_width_emu / cx
-            new_cx = target_width_emu
-            new_cy = int(cy * ratio)
-
-            extent.set('cx', str(new_cx))
-            extent.set('cy', str(new_cy))
-
-            # 同步更新 a:ext（图片实际渲染尺寸）
-            for a_ext in inline.findall('.//' + qn('a:ext')):
-                a_ext.set('cx', str(new_cx))
-                a_ext.set('cy', str(new_cy))
-
-            count += 1
-
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                # 移除已有的 vAlign（避免重复）
+                for old in tcPr.findall(qn('w:vAlign')):
+                    tcPr.remove(old)
+                vAlign = OxmlElement('w:vAlign')
+                vAlign.set(qn('w:val'), 'center')
+                tcPr.append(vAlign)
+                count += 1
     if count > 0:
-        print(f'  {count} image(s) resized to {target_width_cm}cm width')
+        print(f'  {count} table cell(s) vertically centered')
+
+
+def center_images(doc):
+    """将包含图片的段落设为居中对齐、无首行缩进。
+
+    WHY: Pandoc 生成的图片段落继承 Normal 样式（左对齐+首行缩进），
+    图片应居中显示。
+    """
+    count = 0
+    for p in doc.paragraphs:
+        if has_drawing(p._element):
+            p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.first_line_indent = Pt(0)
+            count += 1
+    if count > 0:
+        print(f'  {count} image paragraph(s) centered')
 
 
 def process_captions(doc):
@@ -286,10 +282,15 @@ def main():
     # 处理题注
     count = process_captions(doc)
 
-    if count > 0 or True:  # 即使无题注也保存（可能只调了图片尺寸）
-        doc.save(docx_path)
-        print(f'  {count} caption(s) processed')
-        print(f'  Tip: In Word press Ctrl+A then F9 to update fields')
+    # 表格单元格垂直居中
+    center_table_cells(doc)
+
+    # 图片段落居中
+    center_images(doc)
+
+    doc.save(docx_path)
+    print(f'  {count} caption(s) processed')
+    print(f'  Tip: In Word press Ctrl+A then F9 to update fields')
 
 
 if __name__ == '__main__':
