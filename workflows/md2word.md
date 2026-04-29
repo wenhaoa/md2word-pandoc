@@ -1,106 +1,96 @@
 ---
-description: 使用 Pandoc 将 Markdown 转换为样式完整的 Word 文档
+description: Codex 使用的 Markdown 转 Word 预检与转换流程
 ---
 
-# Markdown 到 Word 转换流程
+# Markdown 到 Word 转换流程（Codex）
 
-## ⚡ 快速使用（推荐）
+## 1. 触发条件
 
-### 1. 首次配置（仅需一次）
+用户要求将 Markdown、md、报告、论文或技术文档转换为 Word/docx 时，使用本流程。常见表达包括“转 Word”“转 docx”“md 转 word”“把这个 Markdown 生成 Word”。
 
-将以下内容添加到 PowerShell Profile：
+## 2. 输入定位
+
+1. 如果用户给出 `.md` 路径，使用该文件。
+2. 如果用户只说“当前报告”或“这个文档”，扫描当前工作目录下的 `.md` 文件。
+3. 如果候选文件多于一个且无法从文件名判断，先询问用户。
+
+## 3. 依赖检查
+
+首次使用或转换失败时运行：
 
 ```powershell
-# 编辑 Profile
-notepad $PROFILE
-
-# 添加以下内容到文件末尾：
-function md2word {
-    param([Parameter(Mandatory=$true)][string]$mdFile)
-    $script = "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js"
-    node $script $mdFile
-}
+pandoc --version
+node -v
+python --version
+python -m pip show python-docx
 ```
 
-保存后重启 PowerShell 或执行 `. $PROFILE` 重新加载。
+缺少依赖时先报告缺少项和安装命令，不继续转换。
 
-### 2. 日常使用
+## 4. 自动预检
 
-在任意目录下，直接运行：
-
-// turbo
-```powershell
-md2word "你的文件.md"
-```
-
-**示例**：
-```powershell
-md2word "高精度轨道递推报告.md"
-md2word "C:\Projects\技术文档\研究报告.md"
-```
-
-输出文件会自动生成在源文件同目录，文件名格式：
-```
-源文件名_Final_2026-02-05T16-30-00.docx
-```
-
----
-
-## 🔧 手动调用（无需配置）
-
-如果不想配置 PowerShell 函数，可以直接调用脚本：
+优先运行预检脚本：
 
 ```powershell
-node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js" "你的文件.md"
+node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\check_markdown.js" "源文件.md"
 ```
 
----
+脚本输出为带行号的问题表。脚本无法判断的语义问题，再按下表人工审读。
 
-## 📋 后续处理
+转换前检查以下项目，并按风险处理：
 
-### 表格格式修复
+| 检查项 | 可直接修复 | 需要确认 |
+| ------ | ---------- | -------- |
+| YAML frontmatter 缺少 `title` | 否 | 是 |
+| frontmatter 外存在 `---` 水平线 | 是 | 否 |
+| 标题格式不是 `## N.` / `### N.N` / `#### N.N.N` | 视情况 | 大范围调整需确认 |
+| 图片题注不是 `![图N-M 标题](path)` | 否 | 是 |
+| 表格上方缺少 `表N-M 标题` | 否 | 是 |
+| 图号/表号章内不连续 | 否 | 是 |
+| 图片行后缺少空行 | 是 | 否 |
+| 表格前后缺少空行 | 是 | 否 |
+| GitHub 提示块 `> [!NOTE]` | 是 | 否 |
+| Mermaid 代码块未转 PNG | 否 | 是 |
+| 简单数字+单位被公式包裹 | 是 | 否 |
+| 正式报告中存在 `-` 无序列表 | 视情况 | 改写内容需确认 |
 
-转换后表格可能缺少框线或有缩进问题，需在 Word 中手动修复：
+预检报告使用表格：
 
-1. **修复框线**：
-   - 点击任意表格 → 表格设计 (Table Design)
-   - 找到 "普通表格" (Table Normal) 样式
-   - 右键修改 → 格式 → 边框和底纹 → 设置全框线
+| 行号 | 问题类型 | 当前内容 | 建议修改 |
+| ---- | -------- | -------- | -------- |
 
-2. **修复缩进**：
-   - 修改 `TableContent` 样式
-   - 设置"首行缩进"为 **0**
-   - 设置"样式基准"为 **（无样式）**
+## 5. 执行转换
 
----
+默认命令：
 
-## ❓ 常见问题
+```powershell
+node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
+```
 
-**Q: 标题编号没有出现？**  
-A: 这是模板问题。如需自定义：
-1. 复制模板到项目目录：`Copy-Item "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\templates\md2word模板.docx" .`
-2. 修改模板中的 "Heading 1" 样式，关联多级列表
-3. 再次运行转换（脚本会优先使用当前目录的模板）
+可选参数：
 
-**Q: 公式显示异常？**  
-A: 全选文档内容，设置字体为 **Cambria Math**。
+```powershell
+node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md" --no-caption
+```
 
-**Q: 找不到 md2word 命令？**  
-A: 请确认 PowerShell Profile 已添加函数，并重启 PowerShell。
+## 6. 输出确认
 
----
+确认源文件同目录生成 `.docx`：
 
-## 🎯 核心优势
+```text
+<源文件名>_YYYY-MM-DDTHH-MM-SS.docx
+```
 
-- ✅ **零文件复制**：无需复制任何配置文件
-- ✅ **一键转换**：`md2word "文件.md"` 即可
-- ✅ **原生公式**：LaTeX 自动转为 Word 公式
-- ✅ **智能标题**：自动检测 H1 数量，适配不同结构
-- ✅ **统一管理**：升级 Skill 即升级转换工具
+最终回复包含：
 
----
+1. 输出文件路径。
+2. 已自动修复的问题。
+3. 仍需用户确认或在 Word 中检查的问题。
+4. Word 打开后执行 `Ctrl+A` → `F9` 更新图表编号域。
 
-## 📚 相关说明
+## 7. 失败处理
 
-详细技术说明和样式定制方法，请参考：  
-`$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\SKILL.md`
+1. “模板文件不存在”：检查 skill 是否位于 `~/.codex/skills/md2word-pandoc`，或设置 `MD2WORD_SKILL_DIR`。
+2. “pandoc 不是内部或外部命令”：安装 Pandoc 并重启终端。
+3. Python 脚本失败：先检查 `python-docx`，再尝试加 `--no-caption` 定位是否为题注后处理问题。
+4. 图片丢失：确认图片路径相对源 Markdown 所在目录可解析。

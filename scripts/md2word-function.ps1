@@ -25,12 +25,17 @@ function md2word {
         [string]$mdFile
     )
     
-    # Skill 中的转换脚本路径
-    $script = "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js"
+    # Skill 中的转换脚本路径：Codex 安装目录优先，保留 Antigravity 目录作为兼容兜底
+    $candidateScripts = @(
+        "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js",
+        "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js"
+    )
+    $script = $candidateScripts | Where-Object { Test-Path $_ } | Select-Object -First 1
     
     # 检查脚本是否存在
-    if (-not (Test-Path $script)) {
-        Write-Error "❌ 转换脚本不存在: $script"
+    if (-not $script) {
+        Write-Error "❌ 转换脚本不存在。已检查："
+        $candidateScripts | ForEach-Object { Write-Error "   $_" }
         Write-Error "   请确认 md2word-pandoc Skill 已正确安装"
         return
     }

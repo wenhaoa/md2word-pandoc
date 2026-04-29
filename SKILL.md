@@ -1,10 +1,7 @@
 ---
 name: md2word-pandoc
 description: |
-  使用 Pandoc 将 Markdown 高精度转换为 Word 文档，支持原生公式、自定义样式和智能标题映射。
-  当用户要求将 md 转 word、markdown 转 docx、md 转 docx、把 markdown 文件转换成 word、
-  md 文档生成 word 格式时，必须使用本 Skill。即使用户只是简单说"转成 word"或"要 docx"，
-  只要涉及 Markdown 源文件，都应该激活本 Skill。
+  Use when the user asks to convert Markdown, md, technical reports, papers, notes, or Chinese reports to Word/docx; asks for "转Word", "转docx", "md转word", "markdown转docx"; or needs a Markdown report checked before Word export. Always use for Markdown-to-Word/docx work, even if the user only says "转成Word" or "要docx".
 ---
 
 # Markdown 到 Word 高精度转换方案
@@ -29,6 +26,7 @@ description: |
 - 技术报告格式化（含数学公式）
 - 学术论文转换
 - 需要自定义样式的文档导出
+- 转换前检查 Markdown 报告格式、图表题注、标题层级、frontmatter、Mermaid、公式写法
 
 ## 依赖环境
 
@@ -44,28 +42,48 @@ description: |
 pandoc --version
 node -v
 python --version
+python -m pip show python-docx
 ```
+
+## Codex 使用原则
+
+本 Skill 在 Codex 中以 `~/.codex/skills/md2word-pandoc` 为主路径。不要依赖 Antigravity/Gemini 的 workflow 注册机制；Codex 触发本 Skill 后，直接读取本文件并执行下方流程。
+
+如果用户请求 Markdown 转 Word/docx，默认执行“预检 → 必要修复 → 转换 → 结果报告”。如果用户明确说“只转换，不检查”，可以跳过预检，但仍需说明风险。
+
+转换命令优先使用脚本所在目录，通常为：
+
+```powershell
+node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
+```
+
+脚本也支持 `MD2WORD_SKILL_DIR` 环境变量覆盖 skill 根目录；当从其他目录复制脚本时可使用该变量指定模板和过滤器位置。
 
 ## 安装与首次配置
 
 ### 安装方式
 
-通过 GitHub 一键安装（告诉 AI 即可）：
+Codex 推荐通过 `skill-installer` 安装到用户目录：
 ```powershell
-npx @anthropic/skills-cli add https://github.com/wenhaoa/md2word-pandoc
+python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-skill-from-github.py" --repo wenhaoa/md2word-pandoc --path . --name md2word-pandoc
 ```
 
-安装目标路径：`C:\Users\<用户名>\.gemini\antigravity\skills\md2word-pandoc\`
+安装目标路径：`C:\Users\<用户名>\.codex\skills\md2word-pandoc\`
 
 ### 配套组件检查
 
-本 Skill 需要配套的 **写作规则（Rules Part D）** 和 **格式预检工作流（report-check）** 才能发挥完整效果。
+本 Skill 不要求额外注册 Gemini workflow。Codex 使用时直接按“自动预检清单”执行即可。
 
-**AI 自动检查**：首次激活本 Skill 时，AI 应检查以下条件：
-1. 用户的 `GEMINI.md`（全局规则文件）中是否包含 "Part D: Markdown 转 Word 规范"
-2. `~/.gemini/antigravity/global_workflows/report-check.md` 是否存在
+**AI 自动检查**：首次激活或转换失败时，先检查以下命令：
 
-若缺少以上任一项，AI 应自动读取 [首次安装指南](references/first_time_setup.md)，将其中的 Rules 追加到用户的 `GEMINI.md`，将 Workflow 保存到 `global_workflows/` 目录。
+```powershell
+pandoc --version
+node -v
+python --version
+python -m pip show python-docx
+```
+
+若缺少依赖，告知用户缺少项和安装命令；不要先尝试转换。
 
 ---
 
@@ -229,18 +247,38 @@ title: 低轨卫星离轨技术研究方案报告
 
 ## AI 操作指令
 
-收到用户的 md 转 word 请求时，按以下步骤执行：
+收到用户的 md 转 Word/docx 请求时，按以下步骤执行。用户没有明确要求“讨论方案”时，直接处理文件，不停在建议阶段。
 
-1. **格式预检**：先执行 `/report-check` 工作流对源文件进行格式检查，若发现问题则先修复再继续
-2. **确认源文件路径**：获取用户提供的 `.md` 文件绝对路径
-3. **执行转换**：运行以下命令：
+1. **定位源文件**：若用户给出路径，使用该路径；若未给出，扫描当前工作目录下的 `.md` 文件并选择最可能的报告文件。候选不唯一时再询问。
+2. **依赖快检**：确认 `pandoc --version`、`node -v`、`python --version`、`python -m pip show python-docx` 可用。当前会话已确认过且未切换环境时可复用结果。
+3. **自动预检**：按“自动预检清单”检查 Markdown。能安全修复的格式问题可直接修复；涉及图表编号重排、章节结构调整、正文改写时先报告问题并确认。
    ```powershell
-   node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
+   node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\check_markdown.js" "源文件.md"
    ```
-   可选参数：`--no-caption`（跳过题注处理）
-4. **报告结果**：告知用户输出文件路径（生成在源文件同目录，格式为 `<源文件名>_时间戳.docx`）
-5. **提示更新域**：告知用户打开 Word 后按 Ctrl+A → F9 更新所有域（题注编号等）
-6. **提示手动调整**：告知用户以下转换后常见的手动检查项
+4. **执行转换**：运行以下命令：
+   ```powershell
+   node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
+   ```
+   可选参数：`--no-caption`（跳过题注处理），`--open`（转换后打开 Word，通常由 GUI 入口使用）。
+5. **验证输出**：确认 `.docx` 文件已生成在源文件同目录，文件名格式为 `<源文件名>_时间戳.docx`。
+6. **报告结果**：给出输出文件路径、预检中已修复/未修复的问题，以及 Word 打开后的人工检查项。
+
+### 自动预检清单
+
+优先运行 `scripts/check_markdown.js` 获取可定位到行号的预检报告；脚本无法覆盖的语义问题再人工审读。转换前至少检查以下项目：
+
+1. YAML frontmatter 是否存在并包含非空 `title`。
+2. 正文标题是否从 `##` 开始，一级标题格式是否为 `## N. 标题` 或 `## 附录 X 标题`。
+3. 是否存在 frontmatter 之外的 `---` 水平分隔线。
+4. 图片是否使用 `![图N-M 标题](path)` 或 `![图A-M 标题](path)`，且题注行长度不超过 60 字符，图片行后有空行。
+5. 表格上方是否有独立题注行 `表N-M 标题` 或 `表A-M 标题`，题注与表格之间有且仅有一个空行。
+6. 每章内图号、表号是否从 1 开始且连续。
+7. 正文是否直接引用具体图表编号（如“图2-1”“表3-2”）；正式报告建议改成“如图所示”“如下表所示”。
+8. 是否存在 GitHub 提示块 `> [!NOTE]`、未转 PNG 的 Mermaid 代码块、不必要的 `**加粗**`、正式报告中的 `-` 无序列表。
+9. 简单数字+单位是否误用公式包裹；如 `$500 \, \text{km}$` 应改为 `500km`。
+10. 表格前后是否各有空行，标题行前后空行是否满足当前报告规范。
+
+预检可参考 `workflows/md2word.md`，但 Codex 不需要执行外部 workflow 命令。
 
 > 如果用户已配置 PowerShell Profile，也可以直接使用 `md2word "文件.md"`。
 
@@ -284,7 +322,7 @@ title: 低轨卫星离轨技术研究方案报告
    # 添加以下内容到文件末尾：
    function md2word {
        param([Parameter(Mandatory=$true)][string]$mdFile)
-       $script = "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js"
+       $script = "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js"
        node $script $mdFile
    }
    
@@ -307,7 +345,7 @@ title: 低轨卫星离轨技术研究方案报告
 在任意目录下执行：
 
 ```powershell
-node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_conversion.js" "你的文件.md"
+node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "你的文件.md"
 ```
 
 ---
@@ -401,6 +439,8 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 ## 版本历史
 
 - **V1.3** (2026-03-04)：
+  - Codex 适配：转换脚本优先从脚本所在目录和 `~/.codex/skills` 查找模板
+  - Codex 适配：AI 操作流程改为内置自动预检，不依赖 Gemini/Antigravity workflow
   - 新增图表题注自动编号（`add_captions.py`），生成 Word SEQ 域
   - 新增 `--no-caption` 命令行参数
   - 禁用 Pandoc subscript/superscript 扩展（防止 `~` 被解析为下标）
@@ -409,7 +449,7 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 - **V1.2** (2026-03-03)：
   - 新增首次安装引导与配套检查（Rules Part D + report-check workflow）
   - 新增 Markdown 文档要求章节（明确 title frontmatter 规范）
-  - 转换前自动执行 `/report-check` 格式预检
+  - 转换前执行格式预检
   - 完善 README.md 展示和安装说明
 - **V1.1** (2026-03-02)：
   - 修复封面标题重复渲染问题（清除 `doc.meta.title`，H1 由封面 `{{TITLE}}` 展示）
@@ -424,8 +464,8 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 
 | 信息             | 权威源                                | 同步到                              |
 | ---------------- | ------------------------------------- | ----------------------------------- |
-| 写作规则 D.1~D.5 | `references/first_time_setup.md`      | → `GEMINI.md` Part D                |
-| 预检规则 D.4     | `references/first_time_setup.md` §D.4 | → 全局 `report-check.md` 工作流     |
+| 写作规则 D.1~D.5 | 本文件“Markdown 文档要求”与“自动预检清单” | → `references/first_time_setup.md`（兼容说明） |
+| 预检规则 D.4     | 本文件“自动预检清单”                    | → `workflows/md2word.md`              |
 | 版本历史         | 本文件（SKILL.md）                    | → `README.md`（仅版本号）           |
 | 转换流程技术细节 | `run_conversion.js` 源码              | → `references/technical_details.md` |
 | 使用方式         | 本文件（SKILL.md）                    | `README.md` 仅简要引用              |
@@ -435,9 +475,10 @@ node "$env:USERPROFILE\.gemini\antigravity\skills\md2word-pandoc\scripts\run_con
 修改转换流程后，按以下清单逐项确认：
 
 1. `scripts/run_conversion.js` — 主流程代码
-2. `SKILL.md` — AI 指令（参数说明、操作步骤、版本历史）
-3. `references/technical_details.md` — 技术备忘（流程图、命令参数）
-4. `references/first_time_setup.md` — 若涉及新的写作规则
-5. `GEMINI.md` Part D — 若 first_time_setup 有变更则同步
-6. `examples/示例技术报告.md` — 新增功能的演示
-7. `README.md` — 仅更新版本号
+2. `scripts/check_markdown.js` — Codex 预检脚本
+3. `SKILL.md` — AI 指令（参数说明、操作步骤、版本历史）
+4. `references/technical_details.md` — 技术备忘（流程图、命令参数）
+5. `references/first_time_setup.md` — 若涉及新的写作规则
+6. `workflows/md2word.md` — 若自动预检清单有变更则同步
+7. `examples/示例技术报告.md` — 新增功能的演示
+8. `README.md` — 仅更新版本号

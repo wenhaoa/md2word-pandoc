@@ -1,6 +1,6 @@
 # 📄 md2word-pandoc
 
-> **Markdown → Word 高精度转换** ｜ Antigravity AI Skill
+> **Markdown → Word 高精度转换** ｜ Codex Skill
 
 [![Pandoc](https://img.shields.io/badge/Pandoc-2.x+-4B8BBE)](https://pandoc.org)
 [![Node.js](https://img.shields.io/badge/Node.js-14+-339933)](https://nodejs.org)
@@ -22,19 +22,20 @@
 ## 🚀 安装
 
 ```powershell
-# 通过 AI 一键安装
-npx @anthropic/skills-cli add https://github.com/wenhaoa/md2word-pandoc
+# 通过 Codex skill-installer 安装
+python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-skill-from-github.py" --repo wenhaoa/md2word-pandoc --path . --name md2word-pandoc
 ```
 
 **环境依赖**：Pandoc 2.x+、Node.js 14+、Python 3.x + python-docx
 
-首次使用时 AI 会自动检查并配置配套的写作规则和预检工作流，详见 [first_time_setup.md](references/first_time_setup.md)。
+Codex 使用时会读取 [SKILL.md](SKILL.md) 中的自动预检清单，不依赖 Gemini/Antigravity workflow 注册。
 
 ## 📖 使用
 
 - **让 AI 帮转**：对 AI 说"帮我把 xxx.md 转成 Word"
+- **预检报告**：`node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\check_markdown.js" "文件.md"`
 - **双击/拖拽/右键发送到**：首次运行 `scripts\install_shortcuts.bat` 安装快捷方式
-- **命令行**：`node scripts\run_conversion.js "文件.md"`
+- **命令行**：`node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "文件.md"`
 
 技术细节、样式定制、常见问题等完整文档见 [SKILL.md](SKILL.md)。
 

@@ -25,11 +25,22 @@ if (!fs.existsSync(mdFile)) {
     process.exit(1);
 }
 
-// 自动从 Skill 目录查找依赖文件
-const SKILL_DIR = path.join(
-    process.env.USERPROFILE || process.env.HOME,
-    '.gemini', 'antigravity', 'skills', 'md2word-pandoc'
-);
+// 自动从脚本所在位置识别 Skill 目录，优先支持 Codex 的 ~/.codex/skills 安装方式。
+// WHY: Codex 安装 GitHub skill 时不会复制到 Gemini/Antigravity 目录，硬编码旧路径会导致模板缺失。
+const homeDir = process.env.USERPROFILE || process.env.HOME;
+const skillDirCandidates = [
+    process.env.MD2WORD_SKILL_DIR,
+    path.resolve(__dirname, '..'),
+    homeDir ? path.join(homeDir, '.codex', 'skills', 'md2word-pandoc') : null,
+    homeDir ? path.join(homeDir, '.gemini', 'antigravity', 'skills', 'md2word-pandoc') : null,
+].filter(Boolean);
+
+function isSkillDir(dir) {
+    return fs.existsSync(path.join(dir, 'templates', 'md2word模板.docx')) &&
+        fs.existsSync(path.join(dir, 'scripts', 'style_filter.lua'));
+}
+
+const SKILL_DIR = skillDirCandidates.find(isSkillDir) || path.resolve(__dirname, '..');
 
 const referenceDoc = path.join(SKILL_DIR, 'templates', 'md2word模板.docx');
 const filterScript = path.join(SKILL_DIR, 'scripts', 'style_filter.lua');
