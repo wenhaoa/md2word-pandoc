@@ -63,10 +63,13 @@ node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "
 
 ### 安装方式
 
-Codex 推荐通过 `skill-installer` 安装到用户目录：
+推荐使用本仓库的一键安装/更新脚本；它内置仓库地址 `https://github.com/wenhaoa/md2word-pandoc.git`，会先比较云端 `origin/main` 与本地 `HEAD`，有更新才拉取，并刷新桌面和右键「发送到」快捷方式：
 ```powershell
-python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-skill-from-github.py" --repo wenhaoa/md2word-pandoc --path . --name md2word-pandoc
+git clone https://github.com/wenhaoa/md2word-pandoc "$env:USERPROFILE\.codex\skills\md2word-pandoc"
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\install_or_update.ps1"
 ```
+
+后续更新时只需重新运行 `scripts\install_or_update.ps1`，右键「发送到」入口会同步指向当前最新脚本；若本地已经是最新版，脚本只刷新快捷方式。
 
 安装目标路径：`C:\Users\<用户名>\.codex\skills\md2word-pandoc\`
 
@@ -226,6 +229,10 @@ title: 低轨卫星离轨技术研究方案报告
 - 数学公式用 `$...$` 和 `$$...$$`，简单数字+单位直写（如 1100km）
 - 禁用 GitHub 提示块（`> [!NOTE]`），改为 "注：" 前缀段落
 - Mermaid 图表需先转 PNG 再引用
+- 标题必须独立成行，标题前后保留空行，避免标题与正文或图表粘连
+- 正式报告中不要保留连续空行、行尾空格或空白行内空格
+- 正文避免固定图表编号和交叉引用（如“见图2-1”），优先写“如图所示”“如下表所示”
+- Markdown 表格分隔行的横线数量会影响 Word 列宽，按内容长短调整，尤其第一列不要只写 `---`
 
 ### Unicode 上下标（替代简单公式）
 
@@ -273,10 +280,11 @@ title: 低轨卫星离轨技术研究方案报告
 4. 图片是否使用 `![图N-M 标题](path)` 或 `![图A-M 标题](path)`，且题注行长度不超过 60 字符，图片行后有空行。
 5. 表格上方是否有独立题注行 `表N-M 标题` 或 `表A-M 标题`，题注与表格之间有且仅有一个空行。
 6. 每章内图号、表号是否从 1 开始且连续。
-7. 正文是否直接引用具体图表编号（如“图2-1”“表3-2”）；正式报告建议改成“如图所示”“如下表所示”。
+7. 正文是否直接引用具体图表编号或形成交叉引用（如“图2-1”“表3-2”“见表4-1”）；正式报告建议改成“如图所示”“如下表所示”，避免 Word 自动编号更新后正文编号错位。
 8. 是否存在 GitHub 提示块 `> [!NOTE]`、未转 PNG 的 Mermaid 代码块、不必要的 `**加粗**`、正式报告中的 `-` 无序列表。
 9. 简单数字+单位是否误用公式包裹；如 `$500 \, \text{km}$` 应改为 `500km`。
-10. 表格前后是否各有空行，标题行前后空行是否满足当前报告规范。
+10. 标题前后是否各有空行，表格题注与表格之间是否有且仅有一个空行。
+11. 表格分隔行横线数量是否合理控制列宽，尤其第一列是否按内容宽度加长。
 
 预检可参考 `workflows/md2word.md`，但 Codex 不需要执行外部 workflow 命令。
 
@@ -307,7 +315,7 @@ title: 低轨卫星离轨技术研究方案报告
 | 拖拽 .md 文件到桌面图标上        | 直接转换                          |
 | 右键 .md 文件 → 发送到 → md2word | 在文件资源管理器中直接转换        |
 
-转换完成后**自动打开 Word** 查看效果。
+转换完成后**自动打开 Word** 查看效果；右键「发送到」入口成功转换后黑框约 10 秒后自动关闭，便于查看提示。
 
 ---
 

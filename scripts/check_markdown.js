@@ -15,7 +15,7 @@ if (!fs.existsSync(mdFile)) {
     process.exit(2);
 }
 
-const content = fs.readFileSync(mdFile, 'utf8');
+const content = fs.readFileSync(mdFile, 'utf8').replace(/^\uFEFF/, '');
 const lines = content.split(/\r?\n/);
 const issues = [];
 
@@ -30,6 +30,36 @@ function addIssue(lineNo, type, current, suggestion) {
 
 function isBlank(index) {
     return index < 0 || index >= lines.length || lines[index].trim() === '';
+}
+
+function visibleWidth(text) {
+    let width = 0;
+    for (const ch of text) {
+        width += /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch) ? 2 : 1;
+    }
+    return width;
+}
+
+function parsePipeCells(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+}
+
+function dashCount(cell) {
+    return (cell.match(/-/g) || []).length;
+}
+
+function isStructuralLine(line) {
+    const trimmed = line.trim();
+    return trimmed === '' ||
+        /^---$/.test(trimmed) ||
+        /^#{1,6}\s+/.test(trimmed) ||
+        /^!\[.*?\]\(.*?\)\s*$/.test(trimmed) ||
+        /^```/.test(trimmed) ||
+        /^\$\$/.test(trimmed) ||
+        /^\|.*\|\s*$/.test(trimmed) ||
+        /^>\s*/.test(trimmed) ||
+        /^\s*(?:[-+*]\s+|\d+\.\s+)/.test(line) ||
+        /^表(?:[0-9]+|[A-Z])-[0-9]+\s+.+/.test(trimmed);
 }
 
 function parseFrontmatter() {
@@ -68,6 +98,22 @@ for (let i = Math.max(frontmatter.endIndex + 1, 0); i < lines.length; i++) {
     const line = lines[i];
     const lineNo = i + 1;
 
+    if (/\s+$/.test(line) && line.trim() !== '') {
+        addIssue(lineNo, '行尾空格', line, '删除行尾多余空格');
+    }
+
+    if (line !== '' && line.trim() === '') {
+        addIssue(lineNo, '空白行含空格', line, '空白行不要保留空格或制表符');
+    }
+
+    if (line.trim() === '' && i > 0 && lines[i - 1].trim() === '') {
+        addIssue(lineNo, '连续空行', line, '正式报告中连续空行压缩为一个空行');
+    }
+
+    if (!isStructuralLine(line) && !isStructuralLine(lines[i + 1] || '')) {
+        addIssue(lineNo + 1, '正文硬换行', lines[i + 1], '同一段正文不要手动换行；需要分段时中间保留一个空行');
+    }
+
     if (line.trim() === '---') {
         addIssue(lineNo, '水平线', line, '转 Word 文档中避免使用 --- 水平分隔线');
     }
@@ -86,6 +132,15 @@ for (let i = Math.max(frontmatter.endIndex + 1, 0); i < lines.length; i++) {
 
     if (/^####\s+/.test(line) && !/^####\s+[0-9]+\.[0-9]+\.[0-9]+\s+/.test(line)) {
         addIssue(lineNo, '三级标题格式', line, '使用 #### N.N.N 标题');
+    }
+
+    if (/^#{2,4}\s+/.test(line)) {
+        if (!isBlank(i - 1)) {
+            addIssue(lineNo, '标题前空行', line, '标题前保留一个空行，避免标题与上段正文粘连');
+        }
+        if (!isBlank(i + 1)) {
+            addIssue(lineNo, '标题后空行', line, '标题后保留一个空行，再开始正文或图表');
+        }
     }
 
     if (/^>\s*\[!(NOTE|WARNING|TIP|IMPORTANT|CAUTION)\]/i.test(line)) {
@@ -125,14 +180,26 @@ for (let i = Math.max(frontmatter.endIndex + 1, 0); i < lines.length; i++) {
         if (!/^表(?:[0-9]+|[A-Z])-[0-9]+\s+.+/.test(captionLine)) {
             addIssue(lineNo, '表格题注', line, '表格上方添加独立题注行：表N-M 标题');
         }
+        if (i - j - 1 !== 1) {
+            addIssue(lineNo, '题注表格间距', line, '表格题注与表格之间保留且仅保留一个空行');
+        }
         if (!isBlank(j - 1)) {
             addIssue(j + 1, '表格前空行', captionLine, '表格题注前保留一个空行');
+        }
+        const headers = parsePipeCells(line);
+        const separators = parsePipeCells(lines[i + 1] || '');
+        const firstColumnDashMin = Math.max(6, Math.min(12, visibleWidth(headers[0] || '')));
+        if (dashCount(separators[0] || '') < firstColumnDashMin) {
+            addIssue(lineNo + 1, '表格列宽控制', lines[i + 1], `第一列分隔横线建议不少于 ${firstColumnDashMin} 个 -，用横线数量控制 Word 表格列宽`);
+        }
+        if (separators.length > 1 && separators.every(cell => dashCount(cell) <= 3)) {
+            addIssue(lineNo + 1, '表格列宽控制', lines[i + 1], '不要所有列都只写 ---；按内容长短增加横线数量，尤其控制第一列宽度');
         }
     }
 
     const refs = line.match(/[图表](?:[0-9]+|[A-Z])-[0-9]+/g) || [];
     if (refs.length > 0 && !/^!\[图/.test(line) && !/^表(?:[0-9]+|[A-Z])-[0-9]+\s+/.test(line.trim())) {
-        addIssue(lineNo, '正文图表编号引用', line, '正文建议写“如图所示”或“如下表所示”，避免固定编号');
+        addIssue(lineNo, '正文图表编号引用', line, '正文建议写“如图所示”或“如下表所示”，避免固定编号和交叉引用');
     }
 }
 

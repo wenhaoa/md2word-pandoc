@@ -185,6 +185,27 @@ def center_table_cells(doc):
         print(f'  {count} table cell(s) vertically centered')
 
 
+def format_table_header_rows(doc):
+    """将每个表格首行设置为加粗、水平居中。
+
+    WHY: Markdown 表格的首行是表头，统一在 Word 中突出显示，
+    避免依赖作者手动给表头加粗或居中。
+    """
+    count = 0
+    for table in doc.tables:
+        if not table.rows:
+            continue
+        for cell in table.rows[0].cells:
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                paragraph.paragraph_format.first_line_indent = Pt(0)
+                for run in paragraph.runs:
+                    run.bold = True
+            count += 1
+    if count > 0:
+        print(f'  {count} table header cell(s) bold centered')
+
+
 def center_images(doc):
     """将包含图片的段落设为居中对齐、无首行缩进。
 
@@ -284,6 +305,9 @@ def main():
 
     # 表格单元格垂直居中
     center_table_cells(doc)
+
+    # 表格首行加粗并水平居中
+    format_table_header_rows(doc)
 
     # 图片段落居中
     center_images(doc)

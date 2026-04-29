@@ -192,7 +192,7 @@ try {
     console.log("1️⃣  准备文件 (自动清理格式)...");
 
     // 读取源文件内容
-    let content = fs.readFileSync(mdFile, 'utf8');
+    let content = fs.readFileSync(mdFile, 'utf8').replace(/^\uFEFF/, '');
     content = cleanSpaces(content);
 
 
