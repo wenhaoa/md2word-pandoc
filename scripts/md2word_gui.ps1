@@ -28,6 +28,73 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Wait-And-Exit -Code 1
 }
 
+function Get-PythonCommand {
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        return @($python.Source)
+    }
+
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    if ($py) {
+        return @($py.Source, "-3")
+    }
+
+    return $null
+}
+
+function Invoke-Python {
+    param(
+        [string[]]$PythonCommand,
+        [string[]]$Arguments
+    )
+
+    if ($PythonCommand.Count -gt 1) {
+        & $PythonCommand[0] $PythonCommand[1..($PythonCommand.Count - 1)] @Arguments
+    } else {
+        & $PythonCommand[0] @Arguments
+    }
+}
+
+function Test-PythonModule {
+    param(
+        [string[]]$PythonCommand,
+        [string]$ModuleName
+    )
+
+    Invoke-Python -PythonCommand $PythonCommand -Arguments @("-c", "import $ModuleName") *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Ensure-PythonDependencies {
+    $pythonCommand = Get-PythonCommand
+    if (-not $pythonCommand) {
+        Write-Host "[Error] Python not found. Install it first: winget install Python.Python.3.12"
+        Wait-And-Exit -Code 1
+    }
+
+    $missingPackages = @()
+    if (-not (Test-PythonModule -PythonCommand $pythonCommand -ModuleName "docx")) {
+        $missingPackages += "python-docx"
+    }
+    if (-not (Test-PythonModule -PythonCommand $pythonCommand -ModuleName "docxcompose")) {
+        $missingPackages += "docxcompose"
+    }
+
+    if ($missingPackages.Count -eq 0) {
+        return
+    }
+
+    Write-Host "[Info] Installing missing Python packages: $($missingPackages -join ', ')"
+    Invoke-Python -PythonCommand $pythonCommand -Arguments (@("-m", "pip", "install", "--user") + $missingPackages)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[Error] Failed to install Python packages."
+        Write-Host "        Please run: python -m pip install --user $($missingPackages -join ' ')"
+        Wait-And-Exit -Code 1
+    }
+}
+
+Ensure-PythonDependencies
+
 if (-not (Test-Path -LiteralPath $conversionScript)) {
     Write-Host "[Error] conversion script not found: $conversionScript"
     Wait-And-Exit -Code 1
