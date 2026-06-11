@@ -14,35 +14,42 @@ from docxcompose.composer import Composer
 from docx import Document
 
 
-def replace_title_placeholder(doc, title):
-    """替换模板中的 {{TITLE}} 占位符为实际标题。
-    
-    WHY: Word 可能将 {{TITLE}} 拆分到多个 run 中，
+def replace_cover_placeholders(doc, replacements):
+    """替换模板封面中的占位符。
+
+    WHY: Word 可能将 {{TITLE}} / {{DATE_CN}} 拆分到多个 run 中，
     因此先尝试 run 级替换，若失败则回退到段落级重组。
     """
-    PLACEHOLDER = '{{TITLE}}'
-    
     for para in doc.paragraphs:
-        if PLACEHOLDER not in para.text:
+        matched = {k: v for k, v in replacements.items() if k in para.text}
+        if not matched:
             continue
-        
+
         # 尝试 run 级精确替换
         replaced = False
         for run in para.runs:
-            if PLACEHOLDER in run.text:
-                run.text = run.text.replace(PLACEHOLDER, title)
-                replaced = True
-        
+            for placeholder, value in matched.items():
+                if placeholder in run.text:
+                    run.text = run.text.replace(placeholder, value)
+                    replaced = True
+
         if replaced:
             continue
-        
+
         # 回退：占位符被拆分到多个 run，用段落级重组
         # WHY: 保留第一个 run 的格式，清空其余 run
-        new_text = para.text.replace(PLACEHOLDER, title)
+        new_text = para.text
+        for placeholder, value in matched.items():
+            new_text = new_text.replace(placeholder, value)
         if para.runs:
             para.runs[0].text = new_text
             for run in para.runs[1:]:
                 run.text = ''
+
+
+def replace_title_placeholder(doc, title):
+    """兼容旧调用：替换模板中的 {{TITLE}} 占位符为实际标题。"""
+    replace_cover_placeholders(doc, {'{{TITLE}}': title})
 
 
 def add_table_borders(doc):
@@ -120,22 +127,28 @@ def _remove_first_empty_paragraph(doc):
             return
 
 
-def merge(prefix_path, body_path, output_path, title=None):
+def merge(prefix_path, body_path, output_path, title=None, date_cn=None):
     """合并前缀模板与正文文档。
-    
+
     Args:
         prefix_path: 包含封面+目录的模板文件路径
         body_path: Pandoc 生成的正文文件路径
         output_path: 合并后的输出文件路径
         title: 可选，替换 {{TITLE}} 占位符的标题文本
+        date_cn: 可选，替换 {{DATE_CN}} 占位符的中文年月
     """
     # 1. 打开前缀模板
     prefix = Document(prefix_path)
     
-    # 2. 替换标题占位符
+    # 2. 替换封面占位符
+    replacements = {}
     if title:
-        replace_title_placeholder(prefix, title)
-    
+        replacements['{{TITLE}}'] = title
+    if date_cn:
+        replacements['{{DATE_CN}}'] = date_cn
+    if replacements:
+        replace_cover_placeholders(prefix, replacements)
+
     # 3. 给正文表格添加框线（在合并前处理，封面表格不受影响）
     body = Document(body_path)
     add_table_borders(body)
@@ -160,9 +173,10 @@ def main():
     parser.add_argument('body', help='正文文档路径')
     parser.add_argument('output', help='输出文件路径')
     parser.add_argument('--title', help='替换 {{TITLE}} 占位符的标题', default=None)
-    
+    parser.add_argument('--date-cn', help='替换 {{DATE_CN}} 占位符的中文年月', default=None)
+
     args = parser.parse_args()
-    merge(args.prefix, args.body, args.output, args.title)
+    merge(args.prefix, args.body, args.output, args.title, args.date_cn)
 
 
 if __name__ == '__main__':

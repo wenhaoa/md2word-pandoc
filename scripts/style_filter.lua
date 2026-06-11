@@ -90,6 +90,24 @@ local function strip_manual_numbering(el)
   end
 end
 
+local function table_inline_to_word_break(inline)
+  if inline.t == 'RawInline'
+      and inline.format == 'html'
+      and inline.text:match("^%s*<br%s*/?>%s*$") then
+    return pandoc.LineBreak()
+  end
+
+  return inline
+end
+
+local function normalize_table_line_breaks(inlines)
+  local normalized = {}
+  for _, inline in ipairs(inlines) do
+    table.insert(normalized, table_inline_to_word_break(inline))
+  end
+  return normalized
+end
+
 -- 主过滤器：处理整个文档
 function Pandoc(doc)
   -- Step 1: 统计 H1 数量
@@ -149,7 +167,7 @@ function Pandoc(doc)
     Table = function(tbl)
       return tbl:walk {
         Plain = function(p)
-          return pandoc.Div({pandoc.Para(p.content)}, {['custom-style'] = 'TableContent'})
+          return pandoc.Div({pandoc.Para(normalize_table_line_breaks(p.content))}, {['custom-style'] = 'TableContent'})
         end
       }
     end

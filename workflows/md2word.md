@@ -84,7 +84,7 @@ node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "
 确认源文件同目录生成 `.docx`：
 
 ```text
-<源文件名>_YYYY-MM-DDTHH-MM-SS.docx
+<源文件名>YYYYMMDD_HHMMSS.docx
 ```
 
 最终回复包含：

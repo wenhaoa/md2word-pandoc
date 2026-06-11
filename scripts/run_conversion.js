@@ -57,15 +57,17 @@ if (!fs.existsSync(filterScript)) {
     process.exit(1);
 }
 
-// 生成输出文件名（基于源文件名 + 时间戳）
+// 生成输出文件名（基于源文件名 + 紧凑北京时间戳）
 const now = new Date();
 const offset = now.getTimezoneOffset() * 60000; // Beijing +8
 const localDate = new Date(now.getTime() - offset);
-const timestamp = localDate.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const localIso = localDate.toISOString();
+const timestamp = localIso.slice(0, 19).replace(/[-:]/g, '').replace('T', '_');
+const coverDateCn = `${localIso.slice(0, 4)} 年 ${Number(localIso.slice(5, 7))} 月`;
 
 // 获取源文件basename（不含扩展名）
 const baseName = path.basename(mdFile, '.md');
-const finalName = `${baseName}_${timestamp}.docx`;
+const finalName = `${baseName}${timestamp}.docx`;
 
 // 输出到源文件所在目录
 const outputDir = path.dirname(mdFile);
@@ -214,8 +216,9 @@ try {
         // 从 MD frontmatter 提取 title
         const titleMatch = content.match(/^---[\s\S]*?title:\s*(.+?)[\r\n]/m);
         const titleArg = titleMatch ? `--title "${titleMatch[1].trim()}"` : '';
+        const dateCnArg = `--date-cn "${coverDateCn}"`;
 
-        const mergeCmd = `python "${mergeScript}" "${referenceDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg}`;
+        const mergeCmd = `python "${mergeScript}" "${referenceDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg} ${dateCnArg}`;
         execSync(mergeCmd, { stdio: 'inherit' });
     }
 

@@ -34,7 +34,7 @@ pandoc "源文件.md" -o "输出.docx" ^
 
 | 脚本               | 功能                                      | 依赖              |
 | ------------------ | ----------------------------------------- | ----------------- |
-| `merge_cover.py`   | 合并模板中的封面+目录页，替换 `{{TITLE}}` | python-docx       |
+| `merge_cover.py`   | 合并模板中的封面+目录页，替换 `{{TITLE}}` / `{{DATE_CN}}` | python-docx       |
 | `add_captions.py`  | 将 `图N-M` / `表N-M` 转为 Word SEQ 域     | python-docx, lxml |
 | `style_filter.lua` | 智能标题映射、编号清洗、表格样式          | Pandoc 内置       |
 
