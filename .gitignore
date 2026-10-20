@@ -1,2 +1,4 @@
 # Generated Word files (from conversion)
 examples/*.docx
+__pycache__/
+*.py[cod]

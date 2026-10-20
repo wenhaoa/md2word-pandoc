@@ -7,6 +7,26 @@
 local h1_count = 0
 local shift_mode = nil  -- "shift" or "no_shift"
 
+local function ordinal_prefix(text)
+  local allowed = {}
+  for _, code in utf8.codes('一二三四五六七八九十百') do allowed[code] = true end
+  local length = 0
+  for position, code in utf8.codes(text) do
+    if not allowed[code] then
+      if length == 0 then return nil end
+      local rest = text:sub(position)
+      for _, delimiter in ipairs({'、', '.', '．'}) do
+        if rest:sub(1, #delimiter) == delimiter then
+          return position + #delimiter - 1
+        end
+      end
+      return nil
+    end
+    length = length + 1
+  end
+  return nil
+end
+
 -- Helper function to recursively find the first Str element and its parent list
 local function get_first_str_ref(content)
   if #content == 0 then return nil, nil, nil end
@@ -37,6 +57,7 @@ local function strip_manual_numbering(el)
   if str_item then
     local text = str_item.text
     local processed = false
+    local ordinal_end = ordinal_prefix(text)
     
     -- Case 1: Chinese Chapter "第1章" or "第一章"
     -- Match "第" followed by non-whitespace chars (numbers or hanzi) then "章"
@@ -45,21 +66,29 @@ local function strip_manual_numbering(el)
        processed = true
        
     -- Case 2: Numeric with dot "1." or "1.1" or "1.1.1"
-    elseif text:match("^%d+%.") then
+    elseif text:match("^%d+%.[%d%.]*$") then
        text = text:gsub("^%d+%.[%d%.]*%s*", "")
        processed = true
 
-    -- Case 3: Numeric with Dunhao "1、"
+    -- Case 3: Chinese ordinal with Dunhao "一、" / "五、"
+    -- WHY: Chinese reports often use "## 五、技术基础与研发进展".
+    -- Word templates usually add Arabic chapter numbers automatically, so this
+    -- manual Chinese ordinal must be removed to avoid "5 五、..." duplication.
+    elseif ordinal_end then
+       text = text:sub(ordinal_end + 1):gsub('^%s+', '')
+       processed = true
+
+    -- Case 5: Numeric with Dunhao "1、"
     elseif text:match("^%d+、") then
        text = text:gsub("^%d+、%s*", "")
        processed = true
 
-    -- Case 4: Parentheses "(1)"
+    -- Case 6: Parentheses "(1)"
     elseif text:match("^%(%d+%)") then
        text = text:gsub("^%(%d+%)%s*", "")
        processed = true
 
-    -- Case 5: Numeric with Space "1 " (but allow "2026 " year context)
+    -- Case 7: Numeric with Space "1 " (but allow "2026 " year context)
     -- Strict check: Start with digit(s), followed by space, but ensure it's not a year (4 digits)
     elseif text:match("^%d+%s+") then
        -- Simple heuristic: if it's 4 digits, assume it might be a year, don't strip
@@ -69,7 +98,7 @@ local function strip_manual_numbering(el)
            processed = true
        end
 
-    -- Case 6: Pure numeric "1" or "12" (Pandoc splits "## 1 xxx" into Str("1") + Space + Str("xxx"))
+    -- Case 8: Pure numeric "1" or "12" (Pandoc splits "## 1 xxx" into Str("1") + Space + Str("xxx"))
     -- WHY: Pandoc 会将 "1 软件概述" 拆分为独立的 Str("1"), Space, Str("软件概述") 三个元素
     -- 此时第一个 Str 只包含纯数字，没有空格，需要删除该 Str + 后续 Space
     elseif text:match("^%d+$") and not text:match("^%d%d%d%d$") then
@@ -79,10 +108,19 @@ local function strip_manual_numbering(el)
     end
     
     if processed then
+       -- 去掉残留的段首空白（含全角空格 U+3000，UTF-8 编码为 E3 80 80），
+       -- 否则 Word 自动编号与标题之间会多出一个空格。
+       text = text:gsub("^%s+", ""):gsub("^\227\128\128+", "")
        str_item.text = text
        if text == "" then
          table.remove(parent_list, index)
-         if #parent_list >= index and parent_list[index].t == 'Space' then
+         -- 连带删除紧随其后的空白元素：Space 或纯空白（含全角空格）Str
+         while parent_list[index] and parent_list[index].t == 'Space' do
+             table.remove(parent_list, index)
+         end
+         while parent_list[index] and parent_list[index].t == 'Str'
+               and (parent_list[index].text:match("^[%s]*$")
+                    or parent_list[index].text:match("^\227\128\128+$")) do
              table.remove(parent_list, index)
          end
        end
@@ -90,20 +128,16 @@ local function strip_manual_numbering(el)
   end
 end
 
-local function table_inline_to_word_break(inline)
-  if inline.t == 'RawInline'
-      and inline.format == 'html'
-      and inline.text:match("^%s*<br%s*/?>%s*$") then
-    return pandoc.LineBreak()
-  end
-
-  return inline
-end
-
+-- 保留根目录版本对表格HTML换行的支持。
 local function normalize_table_line_breaks(inlines)
   local normalized = {}
   for _, inline in ipairs(inlines) do
-    table.insert(normalized, table_inline_to_word_break(inline))
+    if inline.t == 'RawInline' and inline.format == 'html'
+        and inline.text:match('^%s*<br%s*/?>%s*$') then
+      table.insert(normalized, pandoc.LineBreak())
+    else
+      table.insert(normalized, inline)
+    end
   end
   return normalized
 end
@@ -121,7 +155,16 @@ function Pandoc(doc)
   -- H1 = 0: 文档从 H2 开始，需要偏移 (H2->Heading1)
   -- H1 = 1: 唯一 H1 作为文档标题，需要偏移 (H1->Title, H2->Heading1)
   -- H1 >= 2: H1 是正式章节，不偏移 (H1->Heading1)
-  if h1_count <= 1 then
+  local requested_mode = pandoc.utils.stringify(doc.meta.md2word_heading_mode or 'auto')
+  local explicit_chapter = false
+  for _, block in ipairs(doc.blocks) do
+    if block.t == 'Header' and block.level == 1 then
+      local text = pandoc.utils.stringify(block.content)
+      explicit_chapter = text:match('^%d+[%s%.、]') ~= nil or text:match('^第%S*章') ~= nil or ordinal_prefix(text) ~= nil
+      break
+    end
+  end
+  if requested_mode == 'shift' or (requested_mode == 'auto' and h1_count <= 1 and not explicit_chapter) then
     shift_mode = "shift"
     print("[style_filter] H1 count = " .. h1_count .. " -> Shift mode (H2->Heading1)")
   else

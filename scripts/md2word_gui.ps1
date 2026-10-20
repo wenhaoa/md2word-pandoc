@@ -141,5 +141,5 @@ if ($code -ne 0) {
 }
 
 Write-Host "====================================="
-Write-Host "Conversion complete. Word file has been opened."
+Write-Host "Conversion complete. Word open request has been submitted."
 Wait-And-Exit -Code 0 -Seconds 10

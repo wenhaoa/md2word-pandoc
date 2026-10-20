@@ -1,514 +1,119 @@
 ---
 name: md2word-pandoc
-description: |
-  Use when the user asks to convert Markdown, md, technical reports, papers, notes, or Chinese reports to Word/docx; asks for "转Word", "转docx", "md转word", "markdown转docx"; or needs a Markdown report checked before Word export. Always use for Markdown-to-Word/docx work, even if the user only says "转成Word" or "要docx".
+description: >-
+  Convert Markdown technical reports to Word/docx with Pandoc, a Chinese Word
+  template, editable OMML equations, captions and cross-references. Use for
+  转Word、转docx、md转word、markdown转docx and Markdown preflight before export.
 ---
 
-# Markdown 到 Word 高精度转换方案
+# Markdown转Word
 
-## 概述
+## 依赖与入口
 
-本 Skill 提供基于 **Pandoc + 用户自定义模板** 的 Markdown 到 Word 转换方案，核心特性：
-
-1. **原生公式支持**：LaTeX 公式自动转换为 Word 原生 OMML 公式，完美可编辑
-2. **所见即所得样式**：直接在模板 DOCX 中设置字体、编号，无需写代码
-3. **智能标题映射**：自动检测 Markdown 标题结构，适配不同写作习惯
-4. **中文排版优化**：自动转换中文双引号、清理 CJK/Latin 间距
-5. **封面与目录合并**：支持从模板自动合并封面页，标题通过 `{{TITLE}}` 占位符注入，年月通过 `{{DATE_CN}}` 注入
-6. **图表题注自动编号**：`图N-M` / `表N-M` 自动转换为 Word SEQ 域，支持自动更新
-
-
-## 使用场景
-
-当需要进行以下任务时，应激活本 Skill：
-
-- Markdown 转 Word 文档
-- 技术报告格式化（含数学公式）
-- 学术论文转换
-- 需要自定义样式的文档导出
-- 转换前检查 Markdown 报告格式、图表题注、标题层级、frontmatter、Mermaid、公式写法
-
-## 依赖环境
-
-| 软件        | 最低版本 | 用途          | 安装命令                               |
-| ----------- | -------- | ------------- | -------------------------------------- |
-| Pandoc      | 2.x      | 核心转换引擎  | `winget install JohnMacFarlane.Pandoc` |
-| Node.js     | 14.x     | 自动化脚本    | `winget install OpenJS.NodeJS.LTS`     |
-| Python      | 3.x      | 封面合并      | `winget install Python.Python.3.12`    |
-| python-docx | —        | Word 文档操作 | `pip install python-docx`              |
-
-安装验证：
-```powershell
-pandoc --version
-node -v
-python --version
-python -m pip show python-docx
-```
-
-## Codex 使用原则
-
-本 Skill 在 Codex 中以 `~/.codex/skills/md2word-pandoc` 为主路径。不要依赖 Antigravity/Gemini 的 workflow 注册机制；Codex 触发本 Skill 后，直接读取本文件并执行下方流程。
-
-如果用户请求 Markdown 转 Word/docx，默认执行“预检 → 必要修复 → 转换 → 结果报告”。如果用户明确说“只转换，不检查”，可以跳过预检，但仍需说明风险。
-
-转换命令优先使用脚本所在目录，通常为：
-
-```powershell
-node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
-```
-
-脚本也支持 `MD2WORD_SKILL_DIR` 环境变量覆盖 skill 根目录；当从其他目录复制脚本时可使用该变量指定模板和过滤器位置。
-
-## 安装与首次配置
-
-### 安装方式
-
-推荐使用本仓库的一键安装/更新脚本；它内置仓库地址 `https://github.com/wenhaoa/md2word-pandoc.git`，会先比较云端 `origin/main` 与本地 `HEAD`，有更新才拉取，并刷新桌面和右键「发送到」快捷方式：
-```powershell
-git clone https://github.com/wenhaoa/md2word-pandoc "$env:USERPROFILE\.codex\skills\md2word-pandoc"
-powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\install_or_update.ps1"
-```
-
-后续更新时只需重新运行 `scripts\install_or_update.ps1`，右键「发送到」入口会同步指向当前最新脚本；若本地已经是最新版，脚本只刷新快捷方式。
-
-安装目标路径：`C:\Users\<用户名>\.codex\skills\md2word-pandoc\`
-
-### 配套组件检查
-
-本 Skill 不要求额外注册 Gemini workflow。Codex 使用时直接按“自动预检清单”执行即可。
-
-**AI 自动检查**：首次激活或转换失败时，先检查以下命令：
+需要Pandoc、Node.js、Python3及`python-docx`、`docxcompose`、`lxml`。模板为`templates/md2word模板.docx`，过滤器为`scripts/style_filter.lua`。首次使用或转换失败时检查依赖；缺少Python包时用同一个Python解释器安装。
 
 ```powershell
 pandoc --version
-node -v
+node --version
 python --version
-python -m pip show python-docx
+python -m pip show python-docx docxcompose lxml
 ```
 
-若缺少依赖，告知用户缺少项和安装命令；不要先尝试转换。
+从skill根目录执行：
 
----
-
-## 核心组件
-
-### 1. 转换脚本 (`run_conversion.js`)
-
-**功能**：
-- **预处理**：清理 CJK/Latin 间距、转换中文双引号、连接 CJK 跨行软换行
-- 自动备份源文件到临时 ASCII 路径（避免中文路径问题）
-- 调用 Pandoc 执行转换（禁用 smart 扩展防止引号干扰）
-- 合并封面模板与正文（自动替换 `{{TITLE}}` 和 `{{DATE_CN}}` 占位符）
-- 生成带北京时间戳的输出文件
-- 自动清理临时文件
-
-**关键配置**：
-```javascript
-const mdFile = '源文件.md';
-const referenceDoc = 'md2word模板.docx';  // 样式模板
-const filterScript = 'style_filter.lua';   // 标题处理过滤器
+```powershell
+node scripts/check_markdown.js 文件.md --json
+node scripts/run_conversion.js 文件.md
 ```
 
-**时间戳处理**：
-```javascript
-// 自动修正为北京时间 (+8)
-const offset = now.getTimezoneOffset() * 60000;
-const localDate = new Date(now.getTime() - offset);
-```
+从任意目录执行时使用脚本绝对路径，Codex默认安装位置为`~/.codex/skills/md2word-pandoc`。`MD2WORD_SKILL_DIR`可指定另一份完整skill；脚本、过滤器和模板必须来自同一目录。
 
----
+保留原有安装更新、PowerShell函数、双击、拖拽和右键“发送到”入口。安装更新使用`scripts/install_or_update.ps1`，仅转换时不运行安装脚本。依赖和快捷入口说明见[环境配置](references/first_time_setup.md)。
 
-### 2. 智能标题过滤器 (`style_filter.lua`)
+## 内容保护
 
-**自动检测逻辑**：
+转换不回写Markdown源文件。默认恢复原有预处理：清理中英文及数字单位间的多余空格、转换中文双引号、连接中文软换行；只处理本次临时输入，保护YAML、代码、链接、路径和数学表达式。`--preserve-text`可跳过这层排版清理。正文改写或文字润色仍需单独处理并复核差异。
 
-| H1 数量 | 场景描述         | 映射策略                                              |
-| ------- | ---------------- | ----------------------------------------------------- |
-| **0**   | 文档从 `##` 开始 | `##` → Heading 1，`###` → Heading 2                   |
-| **1**   | 有唯一总标题     | `#` 丢弃（由封面 `{{TITLE}}` 展示），`##` → Heading 1 |
-| **≥2**  | `#` 作为正式章节 | `#` → Heading 1，`##` → Heading 2                     |
+Pandoc先解析Markdown为AST，只在显示公式节点中提取并去掉`\tag`。通过参数数组调用程序，标题和路径不拼接为shell代码。每次创建独立临时目录，输出恢复为`<源文件名>YYYYMMDD_HHMMSS.docx`并独占写入；仅同秒重名时追加`_2`、`_3`等序号。发布前检查源文件哈希；转换期间源文件变化时终止输出。
 
-**自动清洗功能**：
-- 去除 "第1章"、"1.1" 等手动编号
-- 防止与 Word 模板自动编号冲突
+成功后仅删除本次创建的临时目录；必要步骤失败返回非零并保留诊断目录，不宣布成功。不得清理源文件目录中既有的`temp_input.md`、`temp_output.docx`或其他文件。
 
-**表格样式强制**：
-- 所有表格内容应用 `TableContent` 样式
-- 便于统一调整表格缩进和间距
+## 源文档与题注
 
----
+新写的中文报告遵守用户的Markdown转Word规范：用YAML的`title`设置封面标题，正文从`## 1. 概述`开始。保留已有合理层级和有意义的引用，不为转换擅自改写技术内容。封面标题依次取YAML的`title`、唯一总标题或文件名。
 
-### 3. 图表题注处理 (`add_captions.py`)
-
-**功能**：Pandoc 转换后自动扫描 `图N-M` / `表N-M` 题注，替换为 Word SEQ 域。
-
-**域代码结构**：
-```
-图{STYLEREF 1 \s}-{SEQ 图 \* ARABIC \s 1} 标题文本
-```
-- `STYLEREF 1 \s`：从最近的 Heading 1 获取章节编号（域，自动更新）
-- `SEQ 图 \* ARABIC \s 1`：章内自动递增编号，每个 Heading 1 处重置（域，自动更新）
-
-**段落格式**：题注自动设为居中对齐、无首行缩进、段前段后 6pt。
-
-**使用提示**：生成的 docx 打开后按 **Ctrl+A → F9** 更新所有域即可显示正确编号。
-
----
-
-### 4. 样式模板 (`md2word模板.docx`)
-
-**核心样式定义**：
-
-| 样式名称     | 对应 Markdown | 可自定义项                   |
-| ------------ | ------------- | ---------------------------- |
-| Heading 1    | `##`（H2）    | 字体、字号、多级列表编号     |
-| Heading 2    | `###`（H3）   | 字体、字号、间距             |
-| Normal       | 普通段落      | 字体、行距、首行缩进         |
-| TableContent | 表格内容      | 字体、缩进（建议设为 0）     |
-| Title        | `#`（H1）     | 封面标题样式（仅单 H1 时用） |
-
-**修改样式流程**：
-1. 打开 `md2word模板.docx`
-2. 在 Word 中修改对应样式（右键 → 修改样式）
-3. 保存模板
-4. 重新运行转换脚本即可生效
-
----
-
-## Markdown 文档要求
-
-转 Word 的 Markdown 文件必须遵循以下规范：
-
-### 必须：YAML frontmatter 标题
-
-每个 Markdown 文件**必须**在开头写 YAML frontmatter 的 `title` 字段，该字段用于生成 Word 封面页标题（通过 `{{TITLE}}` 占位符注入）。
+兼容原有`![图1-1 标题](path)`写法，图片alt自动生成可见题注；也支持图下另写独立题注。已有独立题注时优先使用它，不重复生成。图题在图下，表题在表上，题注与相邻内容之间保留一个空行。
 
 ```markdown
 ---
-title: 低轨卫星离轨技术研究方案报告
+title: 技术报告
 ---
 
 ## 1. 概述
-...
+
+![图1-1 系统架构](images/system.png)
+
+图1-1 系统架构
+
+表1-1 输入参数
+
+| 参数 | 取值 | 说明 |
+| -------- | ------------------ | -------------------------------------------- |
+| 推力 | 20mN | 设计输入 |
+
+见图1-1和表1-1。
 ```
 
-**不写 `title` 则 Word 封面标题为空白**，这是最常见的遗漏。
+支持`图1 标题`、`图4-1 标题`、旧式`图4.1 标题`、普通或加粗题注及全角空格。点号分隔的旧式题注统一输出为章内连字符编号。沿用全文连续或章内连续编号，每组从1开始且不重复。脚本题注识别上限80字符，新写报告仍按用户要求控制在60字符以内。无编号短题注仅在明确紧邻图表时识别；含复杂内联对象的题注保留原文，不强行重建。同名题注保留，重复编号报错。
 
-### 标题层级
+图表题注转为SEQ域，章内编号同时使用STYLEREF；缓存保留源编号，不强制标记为dirty，避免Word打开时弹出域更新确认框；手动F9仍可更新。表题段前、图题段后各留0.5行。图片居中；表格单元格居中并清除缩进，表头加粗。表格`<br>`转换为Word换行。
 
-- 正文从 `##`（H2）开始，**不用** `#`（H1），过滤器自动映射为 Word Heading 1
-- 编号带点号：`## 1. 概述`（不是 `## 1 概述`）
-- 附录：`## 附录 A 标题`
+## 标题、封面和表格
 
-### 图表题注写法
+默认`--heading-mode auto`：无H1时H2映射为Heading1；唯一未带章节编号的H1作为封面总标题；多个H1或明确带编号的单个H1作为正文章节。需要明确指定时使用`--heading-mode shift`或`--heading-mode chapters`。
 
-**图片题注**（紧跟图片下方）：
-```markdown
-![图2-1 智能温室控制系统架构示意图](images/system_architecture.png)
-```
+手写章节编号只在Lua过滤器中删除一次，增加“一、”“五．”等中文序号识别，保留“2026年任务”“3D模型”“3.14km测量”等实际标题文字。`fix_heading_numbering.py`是兼容工具，主流程不重复调用。模板应为Heading1至Heading6配置一致的多级编号；附录字母及特殊起始章号需另行确认。
 
-**表格题注**（独立一行，位于表格上方）：
-```markdown
-表2-1 各层核心组件及功能描述
+保留现有封面模板和`{{TITLE}}`、`{{DATE_CN}}`占位符，并兼容模板中的字面年月。默认按北京时间更新年月；`merge_cover.py --date-cn`可指定年月。合并时保持嵌套书签的起止配对，仅删除紧接分节符的结构性空段，不删除图片、公式、域或分页内容。
 
-| 层级 | 核心组件 | 功能描述 |
-| ---- | -------- | -------- |
-| ...  | ...      | ...      |
-```
+表格列宽采用三级判定：能容纳全部单元格时保持全表单行；仅数据行能容纳时允许表头折行；否则按内容比例分配并限制总宽不超正文页宽。字宽按中英文、数字及标点估算，列间保留余量。正文表格在合并封面前处理，封面表格不参与调整。新写Markdown表格仍按用户要求设置不等长的分隔线。
 
-**注意事项**：
-- 编号格式：`图N-M` 或 `表N-M`（N=章节号，M=章内序号），减号分隔
-- Markdown 中写的编号仅用于可读性和排序，转 Word 后由 SEQ 域自动更新
-- 题注行总长度不超过 60 字符（超长会被识别为正文而非独立题注）
-- 正文引用写法不受影响（如「如图2-1所示」不会被转换）
+## 公式、交叉引用和参考文献
 
-### 正文格式
+显示公式保留可编辑OMML，支持`$$...$$`或`\[...\]`，编号使用`\tag{2-1}`，正文按`式(2-1)`引用。缺少标签时按章和顺序补号；已给出的标签必须与章节及顺序一致，否则终止，不静默修改源引用。`equation_numbering.py --plan`和`--plan-file`读取源编号，重复执行不会追加第二份编号。
 
-- 避免不必要的加粗
-- 段落优先原则：描述性内容写成连贯段落，减少分点列举
-- 数学公式用 `$...$` 和 `$$...$$`，简单数字+单位直写（如 1100km）
-- 禁用 GitHub 提示块（`> [!NOTE]`），改为 "注：" 前缀段落
-- Mermaid 图表需先转 PNG 再引用
-- 标题必须独立成行，标题前后保留空行，避免标题与正文或图表粘连
-- 正式报告中不要保留连续空行、行尾空格或空白行内空格
-- 正文避免固定图表编号和交叉引用（如“见图2-1”），优先写“如图所示”“如下表所示”
+公式段落左对齐、无缩进，通过中心和右侧制表位定位公式及编号；行距1.5倍、段前段后各0.5行。简单、无特殊样式的行内公式可转为普通文本及上下标；包含分式、根式、矩阵、嵌套脚标等结构时保留整个OMML。只合并属性一致的相邻数学run，将公式内U+2000–U+200A特殊空格归一化；不执行正文数字单位空格删除。
 
-### 表格列宽控制
+图、表、公式和章节按实际编号建立书签并生成REF域，如`图2-1`、`表2-1`、`式(2-1)`、`第4章`、`第4.8节`。普通文本run及表格单元格内的完整引用参与处理，保留原格式；已有域、代码和跨run引用不强行重建，跨run引用需人工检查。
 
-转 Word 的 Markdown 表格必须主动控制分隔行 `---` 的横线数量。横线数量不是装饰，Pandoc 在转换 pipe table 时会把它作为列宽比例提示；当表格可打印宽度超过默认列宽时，这个比例对 Word 列宽尤其明显。
+参考文献上标默认关闭。仅在确认正文方括号数字均为文献引用时加`--citations`，将`[1]`、`[1,2]`、`[1-3]`整体上标，保留参考文献章节及条目编号。
 
-写表格时遵守以下规则：
+## 执行与验证
 
-- 禁止所有列都只写 `---`，也不要让每列横线长度完全相同
-- 按“列角色、是否允许换行、长不可断词”分配宽度，不要只按字数机械分配
-- 第一列为编号、层级、参数、类别时，一般用 6~10 个 `-`
-- 中等字段列一般用 10~18 个 `-`
-- 长说明列一般用 20~36 个 `-`
-- 含英文型号、路径、接口名、公式、单位组合等不易换行内容的列，应比同字数中文列更宽
-- 中文长句说明允许在 Word 中换行，可放在说明列，但不要挤压短字段列
-- 分隔行总长度建议接近或超过 72 字符，使 Pandoc 更容易按横线比例处理列宽
+1. 定位源文件，检查依赖，运行`check_markdown.js`。新增检查包括本地图片和链接、图表与公式编号、悬空引用；代码示例不作为正文处理。`--json`输出结构化结果。预检与转换是两个独立命令，主转换脚本不自动运行预检。
+2. 按用户已授权的范围修复源文件。用户只要求转换时，不擅自改写章节或技术内容。
+3. 运行`run_conversion.js`。按需使用`--heading-mode auto|shift|chapters`、`--citations`、`--no-caption`、`--preserve-text`、`--open`。`--no-caption`跳过题注及图表引用域化，公式和章节引用仍处理。`--open`等待系统启动命令完成并报告打开错误，不等待Word关闭；右键“发送到”、双击和拖拽入口继续默认自动打开。
+4. 主流程记录Pandoc正文基线，再处理行内公式、数学run、题注、表格、公式编号和引用，完成正文结构校验后合并封面并再次校验。
+5. 校验ZIP、图片哈希、图片对象、表格、显示公式、复杂数学结构、书签起止及REF目标，检查封面占位符残留及编号书签跨段；全部通过且源文件未变化才输出源文件同目录下的独立docx。
+6. 报告实际输出路径和验证结果。结构校验不能代替实际分页检查；打开Word更新目录和全部域，核对图片、题注、表格换行、公式位置及分页。未渲染或目视核验时明确说明，不宣称版式验收完成。MathType不是必要依赖。
 
-推荐写法：
-
-```markdown
-| 层级   | 核心组件                            | 功能描述           |
-| ------ | ----------------------------------- | ------------------ |
-| 感知层 | 温湿度传感器、光照传感器、CO₂传感器 | 环境参数实时采集   |
-```
-
-### Unicode 上下标（替代简单公式）
-
-对于简单的上标/下标场景，优先使用 Unicode 字符代替 `$...$` 公式包裹，减少 Word 中的公式对象数量，排版更自然：
-
-| 字符类别      | 可用字符       | 写法示例         |
-| ------------- | -------------- | ---------------- |
-| 上标数字/符号 | `⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻` | `10⁻⁵`、`5×10⁺³` |
-| 下标数字      | `₀₁₂₃₄₅₆₇₈₉`   | `H₂O`、`C₂₀`     |
-| 下标字母      | `ₐₑₒₓₕₖₗₘₙₚₛₜ` | `Kₚ`、`Cₙₘ`      |
-
-**判断原则**：单个符号的简单上下标（如量级 10⁻⁵、系数 Kₚ）→ Unicode；含分式、求和、向量等复杂表达式 → `$...$` 公式。
-
-**注意**：下标字母仅部分可用（a, e, o, x, h, k, l, m, n, p, s, t），缺少 i, j, r 等。不可用的仍需 `$...$`。
-
-完整写作规范见配套 Rules Part D（在 [first_time_setup.md](references/first_time_setup.md) 中）。
-
----
-
-## AI 操作指令
-
-收到用户的 md 转 Word/docx 请求时，按以下步骤执行。用户没有明确要求“讨论方案”时，直接处理文件，不停在建议阶段。
-
-1. **定位源文件**：若用户给出路径，使用该路径；若未给出，扫描当前工作目录下的 `.md` 文件并选择最可能的报告文件。候选不唯一时再询问。
-2. **依赖快检**：确认 `pandoc --version`、`node -v`、`python --version`、`python -m pip show python-docx` 可用。当前会话已确认过且未切换环境时可复用结果。
-3. **自动预检**：按“自动预检清单”检查 Markdown。能安全修复的格式问题可直接修复；涉及图表编号重排、章节结构调整、正文改写时先报告问题并确认。
-   ```powershell
-   node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\check_markdown.js" "源文件.md"
-   ```
-4. **执行转换**：运行以下命令：
-   ```powershell
-   node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "源文件.md"
-   ```
-   可选参数：`--no-caption`（跳过题注处理），`--open`（转换后打开 Word，通常由 GUI 入口使用）。
-5. **验证输出**：确认 `.docx` 文件已生成在源文件同目录，文件名格式为 `<源文件名>YYYYMMDD_HHMMSS.docx`。
-6. **报告结果**：给出输出文件路径、预检中已修复/未修复的问题，以及 Word 打开后的人工检查项。
-
-### 自动预检清单
-
-优先运行 `scripts/check_markdown.js` 获取可定位到行号的预检报告；脚本无法覆盖的语义问题再人工审读。转换前至少检查以下项目：
-
-1. YAML frontmatter 是否存在并包含非空 `title`。
-2. 正文标题是否从 `##` 开始，一级标题格式是否为 `## N. 标题` 或 `## 附录 X 标题`。
-3. 是否存在 frontmatter 之外的 `---` 水平分隔线。
-4. 图片是否使用 `![图N-M 标题](path)` 或 `![图A-M 标题](path)`，且题注行长度不超过 60 字符，图片行后有空行。
-5. 表格上方是否有独立题注行 `表N-M 标题` 或 `表A-M 标题`，题注与表格之间有且仅有一个空行。
-6. 每章内图号、表号是否从 1 开始且连续。
-7. 正文是否直接引用具体图表编号或形成交叉引用（如“图2-1”“表3-2”“见表4-1”）；正式报告建议改成“如图所示”“如下表所示”，避免 Word 自动编号更新后正文编号错位。
-8. 是否存在 GitHub 提示块 `> [!NOTE]`、未转 PNG 的 Mermaid 代码块、不必要的 `**加粗**`、正式报告中的 `-` 无序列表。
-9. 简单数字+单位是否误用公式包裹；如 `$500 \, \text{km}$` 应改为 `500km`。
-10. 标题前后是否各有空行，表格题注与表格之间是否有且仅有一个空行。
-11. 表格分隔行横线数量是否合理控制列宽，尤其第一列是否按内容宽度加长。
-
-预检可参考 `workflows/md2word.md`，但 Codex 不需要执行外部 workflow 命令。
-
-> 如果用户已配置 PowerShell Profile，也可以直接使用 `md2word "文件.md"`。
-
-### 转换后手动调整清单
-
-以下几项需打开 Word 后人工确认（转换脚本完成后会自动打印此清单）：
-
-1. Ctrl+A → F9 更新全部域（图表编号）
-2. 全选 → MathType → 转换公式（将 OMML 转为 MathType 对象）
-3. 检查残留空格（中英文间、数字与单位间）
-4. 检查表格宽度和图片尺寸，按需拖拽调整
-
----
-
-## 快速开始
-
-### 方式 1：双击 / 拖拽（推荐，无需命令行）
-
-**首次安装**：双击运行 `scripts\install_shortcuts.bat`，自动在桌面和右键「发送到」菜单创建快捷方式。
-
-**日常使用**：
-
-| 操作                             | 说明                              |
-| -------------------------------- | --------------------------------- |
-| 双击桌面「md2word」图标          | 弹出文件选择对话框，选择 .md 文件 |
-| 拖拽 .md 文件到桌面图标上        | 直接转换                          |
-| 右键 .md 文件 → 发送到 → md2word | 在文件资源管理器中直接转换        |
-
-转换完成后**自动打开 Word** 查看效果；右键「发送到」入口成功转换后黑框约 10 秒后自动关闭，便于查看提示。
-
----
-
-### 方式 2：PowerShell 命令
-
-**一次配置，永久使用**
-
-1. **配置 PowerShell Profile**（仅需一次）：
-   ```powershell
-   notepad $PROFILE
-   
-   # 添加以下内容到文件末尾：
-   function md2word {
-       param([Parameter(Mandatory=$true)][string]$mdFile)
-       $script = "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js"
-       node $script $mdFile
-   }
-   
-   # 保存后重新加载
-   . $PROFILE
-   ```
-
-2. **日常使用**：
-   ```powershell
-   # 在任意目录下执行
-   md2word "你的文件.md"
-   ```
-
-
-
----
-
-### 方式 3：直接调用（无需配置）
-
-在任意目录下执行：
+回归测试：
 
 ```powershell
-node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "你的文件.md"
+python scripts/test_regressions.py
+python scripts/merge_cover_placeholder.test.py
+node scripts/run_conversion_filename.test.js
 ```
 
----
+测试在系统临时目录运行，覆盖完整转换、并发、内容保留及失败停止。`update_skill_doc.py`和`patch_caption_pipeline.py`为已停用的一次性迁移脚本，不用于更新安装文件。
 
-### 输出说明
+主要功能示例及验证命令：
 
-转换完成后，输出文件会生成在**源文件同目录**，文件名格式：
+```powershell
+node scripts/check_markdown.js examples/示例技术报告.md --json
+node scripts/run_conversion.js examples/示例技术报告.md --citations
 ```
-<源文件名>20260205_163000.docx
-```
 
-**示例**：
-- 输入：`C:\Projects\报告.md`
-- 输出：`C:\Projects\报告20260205_163000.docx`
+示例覆盖图表与公式编号、交叉引用、简单及复杂行内公式、不同内容长度的表格和文献上标。标题回退、并发和失败处理由回归测试覆盖。流程实现见[技术细节](references/technical_details.md)，文字审读提示见[写作检查](references/ai-writing-checklist.md)。
 
----
-
-## 样式定制指南
-
-### 修改标题编号
-
-1. 打开 `md2word模板.docx`
-2. 选择任意 "标题 1" 段落
-3. 右键 → 修改样式 → 格式 → 编号
-4. 定义多级列表：
-   - 级别 1：章（如 "第1章"）
-   - 级别 2：节（如 "1.1"）
-   - 级别 3：条（如 "1.1.1"）
-
-### 修改正文格式
-
-修改 `Normal` 样式：
-- **字体**：宋体、Times New Roman
-- **行距**：1.5 倍行距
-- **首行缩进**：2 字符
-- **段后间距**：0 pt
-
-### 修复表格缩进
-
-修改 `TableContent` 样式：
-1. 右键修改样式 → 格式 → 段落
-2. 设置"首行缩进"为 **0**
-3. 设置"样式基准"为 **（无样式）**（彻底根除正文缩进干扰）
-
----
-
-## 常见问题
-
-### 1. 表格框线缺失
-
-**原因**：Word 表格样式未设置默认框线
-
-**解决方法**：
-1. 点击任意表格 → 表格设计 (Table Design)
-2. 找到 **"普通表格" (Table Normal)** 样式
-3. 右键修改 → 格式 → 边框和底纹 → 设置全框线
-
-### 2. 公式字体不一致
-
-**问题**：LaTeX 转换的公式与手动输入的数字字体不同
-
-**解决方法**：
-- 全选文档内容，设置字体为 **Cambria Math**
-- 或在模板中设置默认数学字体
-
-### 3. 中文路径无法识别
-
-**原因**：Pandoc 在某些系统上不支持中文路径
-
-**解决方法**：
-- 脚本已自动将文件复制到临时 ASCII 路径
-- 如仍有问题，将整个项目移至纯英文路径
-
-### 4. CJK 与 Latin 间距异常
-
-**问题**：AI 生成的 Markdown 中，中文与数字/英文间有多余空格
-
-**已解决**：`run_conversion.js` 的 `cleanSpaces()` 函数自动清理 CJK/Latin 间距，无需手动处理。
-
----
-
-## 技术细节与开发备忘
-
-转换流程、Pandoc 命令参数、后续增强方向等技术细节见：[technical_details.md](references/technical_details.md)
-
-## 相关资源
-
-- [Pandoc 官方文档](https://pandoc.org/MANUAL.html)
-- [Lua 过滤器指南](https://pandoc.org/lua-filters.html)
-
-## 版本历史
-
-- **V1.3** (2026-03-04)：
-  - Codex 适配：转换脚本优先从脚本所在目录和 `~/.codex/skills` 查找模板
-  - Codex 适配：AI 操作流程改为内置自动预检，不依赖 Gemini/Antigravity workflow
-  - 新增图表题注自动编号（`add_captions.py`），生成 Word SEQ 域
-  - 新增 `--no-caption` 命令行参数
-  - 禁用 Pandoc subscript/superscript 扩展（防止 `~` 被解析为下标）
-  - 新增 `--resource-path` 修复右键发送图片丢失问题
-  - 示例文档增加图片和表格题注演示
-- **V1.2** (2026-03-03)：
-  - 新增首次安装引导与配套检查（Rules Part D + report-check workflow）
-  - 新增 Markdown 文档要求章节（明确 title frontmatter 规范）
-  - 转换前执行格式预检
-  - 完善 README.md 展示和安装说明
-- **V1.1** (2026-03-02)：
-  - 修复封面标题重复渲染问题（清除 `doc.meta.title`，H1 由封面 `{{TITLE}}` 展示）
-  - 修复中文双引号方向错误（成对匹配预转换 + 禁用 Pandoc smart 扩展）
-  - 新增 YAML frontmatter 保护（防止引号转换破坏 YAML 语法）
-  - 新增表格框线与居中自动后处理
-- **V1.0** (2026-02-05)：初始版本，包含核心转换流程和智能标题映射
-
-## 维护指南
-
-### 单一真相源
-
-| 信息             | 权威源                                | 同步到                              |
-| ---------------- | ------------------------------------- | ----------------------------------- |
-| 写作规则 D.1~D.5 | 本文件“Markdown 文档要求”与“自动预检清单” | → `references/first_time_setup.md`（兼容说明） |
-| 预检规则 D.4     | 本文件“自动预检清单”                    | → `workflows/md2word.md`              |
-| 版本历史         | 本文件（SKILL.md）                    | → `README.md`（仅版本号）           |
-| 转换流程技术细节 | `run_conversion.js` 源码              | → `references/technical_details.md` |
-| 使用方式         | 本文件（SKILL.md）                    | `README.md` 仅简要引用              |
-
-### 新增功能时的更新检查清单
-
-修改转换流程后，按以下清单逐项确认：
-
-1. `scripts/run_conversion.js` — 主流程代码
-2. `scripts/check_markdown.js` — Codex 预检脚本
-3. `SKILL.md` — AI 指令（参数说明、操作步骤、版本历史）
-4. `references/technical_details.md` — 技术备忘（流程图、命令参数）
-5. `references/first_time_setup.md` — 若涉及新的写作规则
-6. `workflows/md2word.md` — 若自动预检清单有变更则同步
-7. `examples/示例技术报告.md` — 新增功能的演示
-8. `README.md` — 仅更新版本号
+与更新前的行为差异及兼容性核查见[兼容性说明](references/compatibility_review.md)。

@@ -1,75 +1,47 @@
-# 📄 md2word-pandoc
+# md2word-pandoc
 
-> **Markdown → Word 高精度转换** ｜ Codex Skill
+将Markdown技术报告转换为带封面、目录、可编辑公式、图表题注及交叉引用的Word文档。
 
-[![Pandoc](https://img.shields.io/badge/Pandoc-2.x+-4B8BBE)](https://pandoc.org)
-[![Node.js](https://img.shields.io/badge/Node.js-14+-339933)](https://nodejs.org)
-[![Platform](https://img.shields.io/badge/Platform-Windows-blue)]()
+## 主要功能
 
-将 Markdown 文档高精度转换为排版精美的 Word 文件，专为**中文技术报告**场景优化。
+| 功能 | 说明 |
+| --- | --- |
+| 公式与编号 | 显示公式转OMML，支持源标签、按章编号及正文公式引用 |
+| 交叉引用 | 图、表、公式和章节引用转为书签及REF域 |
+| 公式排版 | 简单行内公式转文本及上下标，复杂公式保留，合并同属性数学run |
+| 表格 | 按内容和正文页宽估算列宽，居中单元格、加粗表头 |
+| 题注 | 兼容图片alt题注，支持独立题注、全文连续或章内连续编号 |
+| 中文排版 | 保留原有空格和中文引号清理，可用`--preserve-text`跳过 |
+| 标题与封面 | 三种标题映射模式，标题回退，封面标题和年月占位符 |
+| 文献引用 | 显式使用`--citations`将方括号文献引用整体上标 |
+| 预检与校验 | 检查本地资源和悬空引用，校验DOCX图片、数学结构、书签及域 |
+| 输出保护 | 独立临时目录、防覆盖输出、并发转换、源文件哈希检查及失败诊断 |
 
-## ✨ 核心能力
+## 安装与使用
 
-| 能力           | 说明                                   |
-| -------------- | -------------------------------------- |
-| 🔢 原生公式     | LaTeX → Word OMML 原生公式，完美可编辑 |
-| 📑 智能标题映射 | 自动检测 H1 数量，适配不同写作习惯     |
-| 🎨 模板样式定制 | 直接在 Word 模板中修改样式即生效       |
-| 🇨🇳 中文排版优化 | 自动修正引号方向、清理 CJK/Latin 空格  |
-| 📋 封面与目录   | 自动合并封面，`{{TITLE}}` / `{{DATE_CN}}` 占位符注入 |
-| 🏷️ 图表自动编号 | `图N-M` / `表N-M` 转为 Word SEQ 域     |
+需要Pandoc、Node.js、Python及`python-docx`、`docxcompose`、`lxml`。环境检查见[环境配置](references/first_time_setup.md)。
 
-## 🚀 安装
+保留原有安装更新入口：
 
 ```powershell
-# 已下载本仓库后：检查云端更新，并自动刷新桌面和右键“发送到”快捷方式
 powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\install_or_update.ps1"
 ```
 
-首次还没有下载本仓库时，先执行：
+无需安装快捷方式即可从skill目录执行：
 
 ```powershell
-git clone https://github.com/wenhaoa/md2word-pandoc "$env:USERPROFILE\.codex\skills\md2word-pandoc"
-powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\install_or_update.ps1"
+node scripts/check_markdown.js examples/示例技术报告.md --json
+node scripts/run_conversion.js examples/示例技术报告.md --citations
 ```
 
-**环境依赖**：Pandoc 2.x+、Node.js 14+、Python 3.x + python-docx
+输出位于源文件同目录，文件名为`<源文件名>YYYYMMDD_HHMMSS.docx`，例如`报告20260507_144822.docx`；仅同秒重名时追加序号以免覆盖。打开Word后更新目录和全部域，再检查分页、表格、图片和公式位置。命令行参数、源文档写法及保护边界见[SKILL.md](SKILL.md)。
 
-Codex 使用时会读取 [SKILL.md](SKILL.md) 中的自动预检清单，不依赖 Gemini/Antigravity workflow 注册。
+## 验证
 
-## 📖 使用
-
-- **让 AI 帮转**：对 AI 说"帮我把 xxx.md 转成 Word"
-- **预检报告**：`node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\check_markdown.js" "文件.md"`
-- **双击/拖拽/右键发送到**：运行 `scripts\install_or_update.ps1` 后会自动刷新快捷方式
-- **命令行**：`node "$env:USERPROFILE\.codex\skills\md2word-pandoc\scripts\run_conversion.js" "文件.md"`
-
-技术细节、样式定制、常见问题等完整文档见 [SKILL.md](SKILL.md)。
-
-## 📁 目录结构
-
-```
-md2word-pandoc/
-├── SKILL.md                    # AI 核心参考（技术细节+维护指南）
-├── README.md                   # 项目简介（本文件）
-├── scripts/
-│   ├── run_conversion.js       # 主转换流程
-│   ├── style_filter.lua        # 智能标题过滤器
-│   ├── add_captions.py         # 图表题注 SEQ 域处理
-│   ├── merge_cover.py          # 封面合并
-│   ├── install_or_update.ps1   # 检查云端更新并刷新快捷方式
-│   ├── install_shortcuts.ps1   # 快捷方式安装/刷新
-│   ├── md2word_gui.bat         # GUI 入口（双击/拖拽/SendTo）
-│   └── install_shortcuts.bat   # 快捷方式安装/刷新入口
-├── templates/
-│   └── md2word模板.docx        # Word 样式模板
-├── references/
-│   ├── first_time_setup.md     # 首次安装指南（含 Rules + Workflow）
-│   └── technical_details.md    # 转换流程技术备忘
-└── examples/
-    └── 示例技术报告.md          # 示例文档
+```powershell
+python scripts/test_regressions.py
+python scripts/merge_cover_placeholder.test.py
+node scripts/run_conversion_filename.test.js
 ```
 
-## 📜 版本
-
-当前版本 **V1.3** (2026-03-04)。完整版本历史见 [SKILL.md](SKILL.md#版本历史)。
+本次功能整合日期：2026-10-20。

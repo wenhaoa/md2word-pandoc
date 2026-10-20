@@ -1,271 +1,183 @@
-
 const fs = require('fs');
-const { execSync } = require('child_process');
 const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+const { cleanSpaces, restoreImageCaptions } = require('./markdown_compat');
 
-// ============ 配置：支持命令行参数 ============
-// 解析命令行参数
-const args = process.argv.slice(2);
-const openAfterConvert = args.includes('--open');
-const skipCaption = args.includes('--no-caption');
-const mdFileInput = args.find(a => !a.startsWith('--'));
+const READER = 'markdown-smart-subscript-superscript-implicit_figures+tex_math_single_backslash';
 
-if (!mdFileInput) {
-    console.error('❌ 错误：请提供源 Markdown 文件名');
-    console.error('用法: node run_conversion.js <源文件.md> [--open] [--no-caption]');
-    console.error('示例: node run_conversion.js 报告.md --open');
-    console.error('  --no-caption    跳过图表题注 SEQ 域处理');
-    process.exit(1);
+function formatTimestamp(instant = Date.now()) {
+    return new Date(instant + 8 * 3600000).toISOString().slice(0, 19)
+        .replace(/[-:]/g, '').replace('T', '_');
 }
 
-// 解析源文件路径
-const mdFile = path.resolve(mdFileInput);
-if (!fs.existsSync(mdFile)) {
-    console.error(`❌ 错误：文件不存在: ${mdFile}`);
-    process.exit(1);
+function publishOutput(working, outputDir, baseName, stamp) {
+    // Keep the original filename; add a numeric suffix only on a real collision.
+    for (let attempt = 0; ; attempt++) {
+        const suffix = attempt ? `_${attempt + 1}` : '';
+        const target = path.join(outputDir, `${baseName}${stamp}${suffix}.docx`);
+        try {
+            fs.copyFileSync(working, target, fs.constants.COPYFILE_EXCL);
+            return target;
+        } catch (error) {
+            if (error.code !== 'EEXIST') throw error;
+        }
+    }
 }
 
-// 自动从脚本所在位置识别 Skill 目录，优先支持 Codex 的 ~/.codex/skills 安装方式。
-// WHY: Codex 安装 GitHub skill 时不会复制到 Gemini/Antigravity 目录，硬编码旧路径会导致模板缺失。
-const homeDir = process.env.USERPROFILE || process.env.HOME;
-const skillDirCandidates = [
-    process.env.MD2WORD_SKILL_DIR,
-    path.resolve(__dirname, '..'),
-    homeDir ? path.join(homeDir, '.codex', 'skills', 'md2word-pandoc') : null,
-    homeDir ? path.join(homeDir, '.gemini', 'antigravity', 'skills', 'md2word-pandoc') : null,
-].filter(Boolean);
-
-function isSkillDir(dir) {
-    return fs.existsSync(path.join(dir, 'templates', 'md2word模板.docx')) &&
-        fs.existsSync(path.join(dir, 'scripts', 'style_filter.lua'));
+function openDocument(filePath, environment = process.env, execute = execFileSync) {
+    if (process.platform !== 'win32') throw new Error('--open仅适用于Windows');
+    // Wait for the launcher and capture failures; do not wait for Word to close.
+    execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        '$ErrorActionPreference = "Stop"; ' +
+        '$choice = (Get-ItemProperty -LiteralPath "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.docx\\UserChoice" -ErrorAction SilentlyContinue).ProgId; ' +
+        '$wordPath = $null; ' +
+        'if (!$choice -or $choice -like "Word.Document.*") { ' +
+        'foreach ($key in @("HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WINWORD.EXE", "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WINWORD.EXE", "HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WINWORD.EXE")) { ' +
+        '$candidate = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue)."(default)"; ' +
+        'if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { $wordPath = $candidate; break } } }; ' +
+        'if ($wordPath) { ' +
+        'Start-Process -FilePath $wordPath -ArgumentList @("/x", ([char]34 + $env:MD2WORD_OPEN_FILE + [char]34)) -ErrorAction Stop ' +
+        '} else { Start-Process -FilePath $env:MD2WORD_OPEN_FILE -ErrorAction Stop }'],
+        { env: { ...environment, MD2WORD_OPEN_FILE: filePath }, windowsHide: true, encoding: 'utf8' });
 }
 
-const SKILL_DIR = skillDirCandidates.find(isSkillDir) || path.resolve(__dirname, '..');
-
-const referenceDoc = path.join(SKILL_DIR, 'templates', 'md2word模板.docx');
-const filterScript = path.join(SKILL_DIR, 'scripts', 'style_filter.lua');
-
-// 验证依赖文件
-if (!fs.existsSync(referenceDoc)) {
-    console.error(`❌ 错误：模板文件不存在: ${referenceDoc}`);
-    console.error('   请确认 md2word-pandoc Skill 已正确安装');
-    process.exit(1);
+function plain(value) {
+    if (Array.isArray(value)) return value.map(plain).join('');
+    if (!value || typeof value !== 'object') return typeof value === 'string' ? value : '';
+    if (value.t === 'Str' || value.t === 'MetaString') return value.c;
+    if (['Space', 'SoftBreak', 'LineBreak'].includes(value.t)) return ' ';
+    if (value.t === 'Code' || value.t === 'Math') return value.c[1];
+    return plain(value.c);
 }
 
-if (!fs.existsSync(filterScript)) {
-    console.error(`❌ 错误：过滤器不存在: ${filterScript}`);
-    process.exit(1);
+function prepareAst(ast) {
+    const plan = [];
+    function visit(value) {
+        if (Array.isArray(value)) { value.forEach(visit); return; }
+        if (!value || typeof value !== 'object') return;
+        if (value.t === 'Math' && value.c[0].t === 'DisplayMath') {
+            const tags = [...value.c[1].matchAll(/\\tag\{([^}]*)\}/g)];
+            if (tags.length > 1 || (tags.length && !/^\d+-\d+$/.test(tags[0][1]))) {
+                throw new Error('显示公式编号无效或一个公式有多个编号');
+            }
+            plan.push(tags.length ? tags[0][1] : null);
+            value.c[1] = value.c[1].replace(/\\tag\{[^}]*\}/g, '');
+        }
+        Object.values(value).forEach(visit);
+    }
+    // Do not treat math in metadata as a body equation.
+    visit(ast.blocks);
+    return plan;
 }
 
-// 生成输出文件名（基于源文件名 + 紧凑北京时间戳）
-const now = new Date();
-const offset = now.getTimezoneOffset() * 60000; // Beijing +8
-const localDate = new Date(now.getTime() - offset);
-const localIso = localDate.toISOString();
-const timestamp = localIso.slice(0, 19).replace(/[-:]/g, '').replace('T', '_');
-const coverDateCn = `${localIso.slice(0, 4)} 年 ${Number(localIso.slice(5, 7))} 月`;
-
-// 获取源文件basename（不含扩展名）
-const baseName = path.basename(mdFile, '.md');
-const finalName = `${baseName}${timestamp}.docx`;
-
-// 输出到源文件所在目录
-const outputDir = path.dirname(mdFile);
-
-// 临时文件（放在源文件目录，使用 ASCII 名避免路径问题）
-const tmpInput = path.join(outputDir, 'temp_input.md');
-const tmpOutput = path.join(outputDir, 'temp_output.docx');
-const finalOutput = path.join(outputDir, finalName);
-
-// ============ 空格清理：对一行正文执行多条规则 ============
-function cleanLineBody(body) {
-    // 规则1: [CJK字符/标点] + 正好 1 个空格 + [任意非空白] → 删除空格
-    body = body.replace(/([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])[ \t](\S)/g, '$1$2');
-
-    // 规则2: [任意非空白] + 正好 1 个空格 + [CJK字符/标点] → 删除空格
-    body = body.replace(/(\S)[ \t]([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g, '$1$2');
-
-    // 规则3: [数字] + 正好 1 个空格 + [单位字母/符号] → 删除空格 (1rad, 5mm)
-    body = body.replace(/(\d)[ \t]([a-zA-Z\u00b0\u00b5\u03bc%\u2030])/g, '$1$2');
-
-    // 规则4: [比较符] + 正好 1 个空格 + [数字] → 删除空格 (<1, >5)
-    body = body.replace(/([\u003c\u003e\u2264\u2265\u2248])[ \t](\d)/g, '$1$2');
-
-    // 规则5: 逗号 + 正好 1 个空格 + [数字/正负号] → 删除空格 (坐标紧凑化)
-    //   覆盖：(0.00, 1346.222) → (0.00,1346.222)
-    body = body.replace(/,[ \t]([+\-\u2212]?\d)/g, ',$1');
-
-    return body;
-}
-
-function cleanSpaces(content) {
-    // Step 1: 保护代码围栏、显示公式和 YAML frontmatter
-    const protectedBlocks = [];
-    // 保护 YAML frontmatter（文件开头的 ---...--- 块）
-    content = content.replace(/^---[\s\S]*?\n---/m, (match) => {
-        protectedBlocks.push(match);
-        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
-    });
-    content = content.replace(/(```[\s\S]*?```)/g, (match) => {
-        protectedBlocks.push(match);
-        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
-    });
-    content = content.replace(/(\$\$[\s\S]*?\$\$)/g, (match) => {
-        protectedBlocks.push(match);
-        return `\x00PROT_${protectedBlocks.length - 1}\x00`;
-    });
-
-    // Step 1.3: 中文双引号转换（在保护区生效后、空格清理前执行）
-    // WHY: 成对匹配 "..." 并要求内容包含至少一个 CJK 字符，
-    // 这样 YAML 中的 "value"、英文引号都不受影响。
-    // 在空格清理前执行，避免空格删除后丢失引号方向信息。
-    content = content.replace(/"([^"\n]*?[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef][^"\n]*?)"/g, '\u201C$1\u201D');
-
-    // Step 1.5: 连接 CJK 跨行软换行
-    // WHY: 当一行以 CJK 字符/标点结尾，下一行以 CJK 字符/标点开头时，
-    // 删除中间的换行符，防止 Pandoc 在此处插入空格
-    content = content.replace(
-        /([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\r?\n([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g,
-        '$1$2'
-    );
-
-    // Step 2: 逐行处理
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-
-        // 跳过含占位符的行
-        if (line.includes('\x00PROT_')) continue;
-
-        // 跳过表格分隔行 |---|---|
-        if (/^\|[\s\-:|]+\|/.test(line)) continue;
-
-        // --- 提取行首 Markdown 语法前缀 (不参与清理) ---
-        let prefix = '';
-        let body = line;
-
-        // 标题行：保护整个 "# " / "## " / "### 1.2.3 " / "## 第X章 " 前缀
-        const headerMatch = line.match(/^(#{1,6}\s+(?:(?:\d+\.)+\d*\s+)?(?:\u7b2c[\S]*\u7ae0\s+)?)/);
-        if (headerMatch) {
-            prefix = headerMatch[1];
-            body = line.slice(prefix.length);
-        } else {
-            // 引用块 > 
-            const quoteMatch = line.match(/^(>\s*)/);
-            if (quoteMatch) {
-                prefix = quoteMatch[1];
-                body = line.slice(prefix.length);
-            } else {
-                // 列表项前缀 (如 "- ", "* ", "1. ")
-                const listMatch = line.match(/^([ \t]*[\*\-\+][ \t]+|[ \t]*\d+\.[ \t]+)/);
-                if (listMatch) {
-                    prefix = listMatch[1];
-                    body = line.slice(prefix.length);
-                }
+function main(argv) {
+    const flags = new Set(['--open', '--no-caption', '--citations', '--heading-mode', '--preserve-text']);
+    let input, headingMode = 'auto';
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--heading-mode') {
+            headingMode = argv[++i];
+            if (!['auto', 'shift', 'chapters'].includes(headingMode)) throw new Error('--heading-mode 使用 auto、shift 或 chapters');
+        } else if (argv[i].startsWith('--')) {
+            if (!flags.has(argv[i])) throw new Error('未知参数：' + argv[i]);
+        } else if (!input) input = argv[i];
+        else throw new Error('一次只转换一个源文件');
+    }
+    if (!input) throw new Error('用法：node run_conversion.js 文件.md [--open] [--no-caption] [--citations] [--preserve-text] [--heading-mode auto|shift|chapters]');
+    const source = path.resolve(input);
+    if (!fs.statSync(source).isFile()) throw new Error('源文件不是普通文件');
+    const outputDir = path.dirname(source);
+    const skillDir = path.resolve(process.env.MD2WORD_SKILL_DIR || path.join(__dirname, '..'));
+    const scriptDir = path.join(skillDir, 'scripts');
+    const referenceDoc = path.join(skillDir, 'templates', 'md2word模板.docx');
+    const filterScript = path.join(scriptDir, 'style_filter.lua');
+    const steps = ['merge_cover.py', 'inline_math_to_text.py', 'merge_math_runs.py',
+        'style_table_headers.py', 'autofit_tables.py', 'equation_numbering.py',
+        'xref_sections.py', 'validate_docx.py'];
+    if (!argv.includes('--no-caption')) steps.push('add_captions.py', 'xref_fields.py');
+    if (argv.includes('--citations')) steps.push('format_citations.py');
+    for (const file of [referenceDoc, filterScript, ...steps.map(name => path.join(scriptDir, name))]) {
+        if (!fs.existsSync(file)) throw new Error('缺少必要文件：' + file);
+    }
+    const env = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
+    const invoke = (program, args, options = {}) => execFileSync(program, args,
+        { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, ...options });
+    invoke('pandoc', ['--version']);
+    invoke('python', ['-c', 'import docx, docxcompose, lxml']);
+    const tempDir = fs.mkdtempSync(path.join(outputDir, '.md2word-'));
+    const working = path.join(tempDir, 'body.docx');
+    const astFile = path.join(tempDir, 'source.json');
+    const normalizedInput = path.join(tempDir, 'source.md');
+    const planFile = path.join(tempDir, 'equations.json');
+    const baseline = path.join(tempDir, 'baseline.json');
+    const before = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+    let completed = false;
+    function python(name, args) {
+        process.stdout.write(invoke('python', [path.join(scriptDir, name), ...args]));
+    }
+    try {
+        console.log('源文件：' + source);
+        const original = fs.readFileSync(source, 'utf8').replace(/^\uFEFF/, '');
+        fs.writeFileSync(normalizedInput, argv.includes('--preserve-text') ? original : cleanSpaces(original), 'utf8');
+        const ast = restoreImageCaptions(JSON.parse(invoke('pandoc', [normalizedInput, '--from', READER, '--to', 'json'])));
+        const h1 = ast.blocks.filter(block => block.t === 'Header' && block.c[0] === 1);
+        const isTitle = h1.length === 1 && (headingMode === 'shift' ||
+            (headingMode === 'auto' && !/^\s*(?:\d+(?:\.|、|\s)|第\S*章|[一二三四五六七八九十百]+[、.．])/.test(plain(h1[0].c[2]))));
+        const title = plain(ast.meta.title) || (isTitle ? plain(h1[0].c[2]) : path.parse(source).name);
+        ast.meta.md2word_heading_mode = { t: 'MetaString', c: headingMode };
+        const plan = prepareAst(ast);
+        fs.writeFileSync(astFile, JSON.stringify(ast), 'utf8');
+        fs.writeFileSync(planFile, JSON.stringify(plan), 'utf8');
+        invoke('pandoc', [astFile, '--from', 'json', '--to', 'docx', '-o', working,
+            '--reference-doc', referenceDoc, '--lua-filter', filterScript,
+            '--resource-path', outputDir, '--standalone'], { stdio: 'inherit' });
+        // Capture the body before cover composition and all mutating steps.
+        python('validate_docx.py', [working, '--snapshot', baseline]);
+        python('inline_math_to_text.py', [working]);
+        python('merge_math_runs.py', [working]);
+        if (!argv.includes('--no-caption')) python('add_captions.py', [working]);
+        python('style_table_headers.py', [working]);
+        python('autofit_tables.py', [working, '--body-only']);
+        python('equation_numbering.py', [working, '--plan-file', planFile]);
+        if (!argv.includes('--no-caption')) python('xref_fields.py', [working, '--md', source]);
+        python('xref_sections.py', [working]);
+        // Bracketed numbers may be array indices; citation styling is opt-in.
+        if (argv.includes('--citations')) python('format_citations.py', [working]);
+        python('validate_docx.py', [working, '--baseline', baseline]);
+        python('merge_cover.py', [referenceDoc, working, working, '--title', title]);
+        python('validate_docx.py', [working, '--baseline', baseline, '--with-cover']);
+        const after = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+        if (after !== before) throw new Error('转换期间源文件发生变化，未发布输出，请重新转换');
+        const stamp = formatTimestamp();
+        const finalOutput = publishOutput(working, outputDir, path.parse(source).name, stamp);
+        completed = true;
+        console.log('转换及结构检查通过。输出文件：' + finalOutput);
+        console.log('打开Word后更新目录和域，并检查分页、表格宽度及公式位置。');
+        if (argv.includes('--open')) {
+            try {
+                openDocument(finalOutput, env);
+                console.log('已提交系统打开Word文档。');
+            } catch (error) {
+                const reason = (error.stderr || error.message).toString().trim();
+                throw new Error('文档已生成，但自动打开失败：' + reason + '\n输出文件：' + finalOutput);
             }
         }
-
-        // --- 防御性判定：如果 body 中存在 `\S` 之间至少 2 个空格的对齐块 ---
-        // WHY: 极大概率是 Pandoc Simple/Multiline/Grid Table 的列分隔符，
-        // 跳过整行避免破坏对齐
-        if (/\S[ \t]{2,}\S/.test(body)) {
-            continue;
-        }
-
-        // 对 body 执行清理
-        body = cleanLineBody(body);
-
-        lines[i] = prefix + body;
-    }
-    content = lines.join('\n');
-
-    // Step 3: 恢复受保护的块
-    content = content.replace(/\x00PROT_(\d+)\x00/g, (_, idx) => protectedBlocks[parseInt(idx)]);
-
-    return content;
-}
-
-try {
-    console.log("📄 源文件:", mdFile);
-    console.log("📝 模板文件:", referenceDoc);
-    console.log("🔧 过滤器:", filterScript);
-    console.log("");
-
-    console.log("1️⃣  准备文件 (自动清理格式)...");
-
-    // 读取源文件内容
-    let content = fs.readFileSync(mdFile, 'utf8').replace(/^\uFEFF/, '');
-    content = cleanSpaces(content);
-
-
-    fs.writeFileSync(tmpInput, content, 'utf8');
-
-    console.log("2️⃣  执行 Pandoc 转换...");
-    // 使用引号包裹路径，防止空格导致的问题
-    // WHY: --resource-path 确保右键发送时也能找到相对路径图片
-    // WHY: -subscript-superscript 防止 ~ 和 ^ 被解析为下标/上标（中文常用 300~400km 表示范围）
-    const cmd = `pandoc "${tmpInput}" -o "${tmpOutput}" --from markdown-smart-subscript-superscript --reference-doc="${referenceDoc}" --lua-filter="${filterScript}" --resource-path="${outputDir}" --standalone`;
-    console.log(`   执行命令: pandoc [源文件] -o [输出] --reference-doc=[模板] --lua-filter=[过滤器]`);
-    execSync(cmd, { stdio: 'inherit' });
-
-    // 2.5 合并封面+目录（模板同时作为样式源和封面内容源）
-    const mergeScript = path.join(SKILL_DIR, 'scripts', 'merge_cover.py');
-    if (fs.existsSync(mergeScript)) {
-        console.log("2.5️⃣  合并封面与目录...");
-
-        // 从 MD frontmatter 提取 title
-        const titleMatch = content.match(/^---[\s\S]*?title:\s*(.+?)[\r\n]/m);
-        const titleArg = titleMatch ? `--title "${titleMatch[1].trim()}"` : '';
-        const dateCnArg = `--date-cn "${coverDateCn}"`;
-
-        const mergeCmd = `python "${mergeScript}" "${referenceDoc}" "${tmpOutput}" "${tmpOutput}" ${titleArg} ${dateCnArg}`;
-        execSync(mergeCmd, { stdio: 'inherit' });
-    }
-
-    // 2.6 添加图表题注 SEQ 域
-    const captionScript = path.join(SKILL_DIR, 'scripts', 'add_captions.py');
-    if (!skipCaption && fs.existsSync(captionScript)) {
-        console.log("2.6️⃣  添加图表题注 SEQ 域...");
-        try {
-            execSync(`python "${captionScript}" "${tmpOutput}"`, { stdio: 'inherit' });
-        } catch (e) {
-            console.warn('  ⚠ 题注处理失败（非致命）:', e.message);
+        return finalOutput;
+    } finally {
+        if (completed) {
+            // Delete only the unique directory created by this invocation.
+            if (path.dirname(tempDir) !== outputDir || !path.basename(tempDir).startsWith('.md2word-')) {
+                throw new Error('临时目录路径校验失败，保留现场');
+            }
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        } else {
+            console.error('转换未完成，诊断文件保留于：' + tempDir);
         }
     }
-
-
-
-    console.log("3️⃣  重命名输出文件...");
-    if (fs.existsSync(tmpOutput)) {
-        fs.renameSync(tmpOutput, finalOutput);
-        console.log(`\n✅ 转换成功！\n`);
-        console.log(`📦 输出文件: ${finalOutput}\n`);
-        console.log(`📋 打开 Word 后请检查：`);
-        console.log(`   1. Ctrl+A → F9 更新全部域（图表编号）`);
-        console.log(`   2. 全选 → MathType → 转换公式`);
-        console.log(`   3. 检查残留空格（中英文间、数字与单位间）`);
-        console.log(`   4. 检查表格宽度和图片尺寸\n`);
-    } else {
-        throw new Error("Pandoc 未能生成输出文件");
-    }
-
-    // 清理临时文件
-    fs.unlinkSync(tmpInput);
-
-    // WHY: --open 标志用于 GUI 入口（BAT 双击/拖拽），命令行模式默认不打开
-    if (openAfterConvert) {
-        console.log('📖 正在打开 Word 文件...');
-        const { exec } = require('child_process');
-        exec(`start "" "${finalOutput}"`);
-    }
-
-} catch (error) {
-    console.error("\n❌ 转换失败:");
-    console.error(error.message);
-
-    // 清理临时文件
-    if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
-    if (fs.existsSync(tmpOutput)) fs.unlinkSync(tmpOutput);
-
-    process.exit(1);
 }
+
+if (require.main === module) {
+    try { main(process.argv.slice(2)); }
+    catch (error) { console.error('转换失败：' + error.message); process.exitCode = 1; }
+}
+module.exports = { cleanSpaces, prepareAst, formatTimestamp, publishOutput, openDocument, main };
