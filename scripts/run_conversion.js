@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { cleanSpaces, restoreImageCaptions } = require('./markdown_compat');
+const { prepareTableLayouts } = require('./table_layouts');
 
 const READER = 'markdown-smart-subscript-superscript-implicit_figures+tex_math_single_backslash';
 
@@ -93,7 +94,7 @@ function main(argv) {
     const filterScript = path.join(scriptDir, 'style_filter.lua');
     const steps = ['merge_cover.py', 'inline_math_to_text.py', 'merge_math_runs.py',
         'style_table_headers.py', 'autofit_tables.py', 'equation_numbering.py',
-        'xref_sections.py', 'validate_docx.py'];
+        'xref_sections.py', 'validate_docx.py', 'landscape_tables.py', 'table_sections.py'];
     if (!argv.includes('--no-caption')) steps.push('add_captions.py', 'xref_fields.py');
     if (argv.includes('--citations')) steps.push('format_citations.py');
     for (const file of [referenceDoc, filterScript, ...steps.map(name => path.join(scriptDir, name))]) {
@@ -109,6 +110,7 @@ function main(argv) {
     const astFile = path.join(tempDir, 'source.json');
     const normalizedInput = path.join(tempDir, 'source.md');
     const planFile = path.join(tempDir, 'equations.json');
+    const tablePlanFile = path.join(tempDir, 'table_layouts.json');
     const baseline = path.join(tempDir, 'baseline.json');
     const before = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
     let completed = false;
@@ -126,13 +128,18 @@ function main(argv) {
         const title = plain(ast.meta.title) || (isTitle ? plain(h1[0].c[2]) : path.parse(source).name);
         ast.meta.md2word_heading_mode = { t: 'MetaString', c: headingMode };
         const plan = prepareAst(ast);
+        const tablePlan = prepareTableLayouts(ast);
         fs.writeFileSync(astFile, JSON.stringify(ast), 'utf8');
         fs.writeFileSync(planFile, JSON.stringify(plan), 'utf8');
+        fs.writeFileSync(tablePlanFile, JSON.stringify(tablePlan), 'utf8');
         invoke('pandoc', [astFile, '--from', 'json', '--to', 'docx', '-o', working,
             '--reference-doc', referenceDoc, '--lua-filter', filterScript,
             '--resource-path', outputDir, '--standalone'], { stdio: 'inherit' });
         // Capture the body before cover composition and all mutating steps.
         python('validate_docx.py', [working, '--snapshot', baseline]);
+        if (tablePlan.landscape.length && JSON.parse(fs.readFileSync(baseline, 'utf8')).tables !== tablePlan.table_count) {
+            throw new Error('表格布局计划与Word正文表格数量不一致，已停止以避免旋转错误表格');
+        }
         python('inline_math_to_text.py', [working]);
         python('merge_math_runs.py', [working]);
         if (!argv.includes('--no-caption')) python('add_captions.py', [working]);
@@ -145,6 +152,7 @@ function main(argv) {
         if (argv.includes('--citations')) python('format_citations.py', [working]);
         python('validate_docx.py', [working, '--baseline', baseline]);
         python('merge_cover.py', [referenceDoc, working, working, '--title', title]);
+        if (tablePlan.landscape.length) python('landscape_tables.py', [working, '--plan', tablePlanFile]);
         python('validate_docx.py', [working, '--baseline', baseline, '--with-cover']);
         const after = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
         if (after !== before) throw new Error('转换期间源文件发生变化，未发布输出，请重新转换');

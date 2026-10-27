@@ -23,6 +23,7 @@ import sys
 from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from table_sections import section_for_block
 
 EMU_PER_PT = 12700
 DEFAULT_FONT_PT = 10.5
@@ -74,20 +75,20 @@ def longest_token_pt(s, fs=DEFAULT_FONT_PT):
     return max([text_width_pt(t, fs) for t in _tokens(s)] + [fs])
 
 
-def col_widths(rows, avail_pt, fs=DEFAULT_FONT_PT):
+def col_widths(rows, avail_pt, fs=DEFAULT_FONT_PT, pad_pt=CELL_PAD_PT, reserve_pt=RESERVE_PT):
     """rows 为**非标题行**。返回 (widths, nat, wmin)。"""
     n = max(len(r) for r in rows)
     nat, wmin = [0.0] * n, [0.0] * n
     for r in rows:
         for i, cell in enumerate(r):
             t = (cell or "").strip()
-            nat[i] = max(nat[i], text_width_pt(t, fs) + CELL_PAD_PT)
-            wmin[i] = max(wmin[i], longest_token_pt(t, fs) + CELL_PAD_PT)
+            nat[i] = max(nat[i], text_width_pt(t, fs) + pad_pt)
+            wmin[i] = max(wmin[i], longest_token_pt(t, fs) + pad_pt)
 
     # 估算字宽与 Word 实际字体有偏差：每列至少留 1 个中文字符的余量
     for i in range(n):
-        nat[i] += RESERVE_PT
-        wmin[i] += RESERVE_PT
+        nat[i] += reserve_pt
+        wmin[i] += reserve_pt
 
     if sum(wmin) >= avail_pt:
         k = avail_pt / sum(wmin)
@@ -149,7 +150,7 @@ def table_rows(table):
             for row in table.rows]
 
 
-def count_lines(rows, ws, fs=DEFAULT_FONT_PT):
+def count_lines(rows, ws, fs=DEFAULT_FONT_PT, pad_pt=CELL_PAD_PT):
     """rows 为**非标题行**。"""
     total = 0
     for r in rows:
@@ -157,7 +158,7 @@ def count_lines(rows, ws, fs=DEFAULT_FONT_PT):
         for i, c in enumerate(r):
             if i >= len(ws) or ws[i] <= 0:
                 continue
-            need = text_width_pt((c or "").strip(), fs) + CELL_PAD_PT
+            need = text_width_pt((c or "").strip(), fs) + pad_pt
             mx = max(mx, math.ceil(need / ws[i]))
         total += mx
     return total
@@ -229,11 +230,15 @@ def set_word_autofit(table):
                 tcPr.remove(old)
 
 
-def available_width_pt(doc):
+def available_width_pt(doc, block=None):
     # WHY: 合并封面后 sections[0] 是封面节（边距 85pt），正文节边距 72pt。
     # 表格在正文里，必须用**最后一节**的正文宽度，否则少算约 26pt，
     # 本可单行放下的窄表会被误判成“需要折行”。
-    sec = doc.sections[-1]
+    if block is not None:
+        from docx.section import Section
+        sec = Section(section_for_block(doc, block), doc.part)
+    else:
+        sec = doc.sections[-1]
     try:
         return (sec.page_width - sec.left_margin - sec.right_margin) / EMU_PER_PT
     except TypeError:
@@ -252,7 +257,7 @@ def cover_cutoff(doc):
     return 0
 
 
-def run(path, dry=False, native=False, body_only=False):
+def run(path, dry=False, native=False, body_only=False, table_indices=None, compact=False):
     doc = Document(path)
     avail = available_width_pt(doc)
     body = list(doc.element.body)
@@ -262,7 +267,9 @@ def run(path, dry=False, native=False, body_only=False):
     tables = list(doc.tables)
     if native:
         n = 0
-        for tb in tables:
+        for table_index, tb in enumerate(tables):
+            if table_indices is not None and table_index not in table_indices:
+                continue
             try:
                 idx = body.index(tb._tbl)
             except ValueError:
@@ -282,7 +289,9 @@ def run(path, dry=False, native=False, body_only=False):
     before = after = 0
     processed = []
 
-    for t in tables:
+    for table_index, t in enumerate(tables):
+        if table_indices is not None and table_index not in table_indices:
+            continue
         try:
             idx = body.index(t._tbl)
         except ValueError:
@@ -290,15 +299,45 @@ def run(path, dry=False, native=False, body_only=False):
         if idx < cut:                      # 封面表格：保持原状
             skipped += 1
             continue
+        avail = available_width_pt(doc, t._tbl)
         rows = table_rows(t)
         if len(rows) < 2:
             continue
         header, data = rows[0], rows[1:]
+        font_pt = DEFAULT_FONT_PT
+        pad_pt = 4.0 if compact else CELL_PAD_PT
+        reserve_pt = 1.0 if compact else RESERVE_PT
+        if compact:
+            # Keep numeric times together before shrinking below ordinary small-five type.
+            while font_pt > 9.0:
+                _, _, minimum = col_widths(data, avail, font_pt, pad_pt, reserve_pt)
+                if sum(minimum) <= avail:
+                    break
+                font_pt -= 0.5
+            if not dry:
+                from docx.shared import Pt
+                for row in t.rows:
+                    for cell in row.cells:
+                        props = cell._tc.get_or_add_tcPr()
+                        margins = props.find(qn('w:tcMar'))
+                        if margins is None:
+                            margins = OxmlElement('w:tcMar')
+                            props.append(margins)
+                        for side in ('left', 'right'):
+                            item = margins.find(qn('w:' + side))
+                            if item is None:
+                                item = OxmlElement('w:' + side)
+                                margins.append(item)
+                            item.set(qn('w:w'), '40')
+                            item.set(qn('w:type'), 'dxa')
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.size = Pt(font_pt)
 
         # 规则：若**所有行（含标题行）**都能单行放下 → 直接用最小列宽
         ncol = max(len(r) for r in rows)
         # 估算字宽与 Word 实际字体有偏差，每列多留 1 个中文字符的余量
-        RESERVE = RESERVE_PT
+        RESERVE = reserve_pt
 
         def nat_of(rs):
             out = []
@@ -306,7 +345,7 @@ def run(path, dry=False, native=False, body_only=False):
                 m_ = 0.0
                 for r in rs:
                     cell = (r[col] if col < len(r) else "") or ""
-                    m_ = max(m_, text_width_pt(cell, DEFAULT_FONT_PT) + CELL_PAD_PT)
+                    m_ = max(m_, text_width_pt(cell, font_pt) + pad_pt)
                 out.append(m_ + RESERVE)
             return out
 
@@ -323,7 +362,7 @@ def run(path, dry=False, native=False, body_only=False):
             widths, nat, wmin = nat_data, nat_data, nat_data
             branch = "2-数据行单行"
         else:
-            widths, nat, wmin = col_widths(data, avail)
+            widths, nat, wmin = col_widths(data, avail, font_pt, pad_pt, reserve_pt)
             branch = "3-最优分配"
         tot = sum(widths)
         if tot > avail:
@@ -340,16 +379,20 @@ def run(path, dry=False, native=False, body_only=False):
         if sum(widths) > avail + 0.5:
             print("     !! 表%d 计算总宽 %.0f > 可用 %.0f（列数 %d，rows %d）"
                   % (len(processed) + 1, sum(widths), avail, len(widths), len(rows)))
-        lb = count_lines(data, orig) if len(orig) == len(widths) else count_lines(data, nat)
-        la = count_lines(data, widths)
+        lb = count_lines(data, orig, font_pt, pad_pt) if len(orig) == len(widths) else count_lines(data, nat, font_pt, pad_pt)
+        la = count_lines(data, widths, font_pt, pad_pt)
         before += lb
         after += la
         if not dry:
             set_widths(t, widths)
         processed.append((len(processed) + 1, widths, lb, la))
+        if compact:
+            print('     横向表紧凑排版：字号%.1f pt，单侧留白2 pt' % font_pt)
 
     if not dry:
-        for t in tables:                   # 表后补空段
+        for table_index, t in enumerate(tables):                   # 表后补空段
+            if table_indices is not None and table_index not in table_indices:
+                continue
             try:
                 idx = body.index(t._tbl)
             except ValueError:
